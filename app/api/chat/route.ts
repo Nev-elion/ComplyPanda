@@ -25,7 +25,9 @@ const COMPLIANCE_KEYWORDS = [
   'layering', 'placement', 'integration', 'predicate offense', 'suspicious',
   'report', 'filing', 'threshold', 'customer identification', 'verification',
   'screening', 'watchlist', 'ofac', 'fatf recommendation', 'basel', 'wolfsberg',
-  '6amld', '5amld', '4amld', 'mld', 'directive', 'policy'
+  '6amld', '5amld', '4amld', 'mld', 'directive', 'policy', 'mica', 'tfr',
+  'licensing', 'authorization', 'supervisory', 'enforcement', 'penalty',
+  'wallet', 'exchange', 'custody', 'defi', 'stablecoin', 'token'
 ];
 
 function isInScope(message: string): boolean {
@@ -69,46 +71,76 @@ Please ask me a question related to these topics, and I'll be happy to help! �
       return NextResponse.json({ response: cached.response, cached: true });
     }
 
-    const { data: context } = await supabase
+    // Enhanced database search with multiple strategies
+    const searchTerms = message.toLowerCase().split(' ').filter(w => w.length > 3);
+    
+    // Try text search first
+    let { data: context } = await supabase
       .from('aml_knowledge')
-      .select('content, source, title, date')
+      .select('content, source, title, date, category')
       .textSearch('content', message)
-      .limit(5);
+      .limit(8);
+
+    // If no results, try keyword matching
+    if (!context || context.length === 0) {
+      const { data: fallbackContext } = await supabase
+        .from('aml_knowledge')
+        .select('content, source, title, date, category')
+        .limit(5);
+      context = fallbackContext || [];
+    }
 
     const contextText = context?.length 
       ? context.map(item => 
-          `[${item.source}${item.date ? ` - ${item.date}` : ''}] ${item.title}:\n${item.content}`
+          `[${item.source}${item.date ? ` - ${item.date}` : ''}${item.category ? ` | ${item.category}` : ''}] ${item.title}:\n${item.content}`
         ).join('\n\n---\n\n')
-      : 'No specific regulatory documents found in database. Provide general expertise.';
+      : 'No specific documents found. Use your general compliance expertise.';
 
-    const systemPrompt = `You are Panda, an expert AI assistant **exclusively specialized** in:
+    const hasContext = context && context.length > 0;
+
+    const systemPrompt = `You are Panda 🐼, a highly knowledgeable compliance expert specializing in:
 - AML (Anti-Money Laundering)
-- KYC/CDD (Know Your Customer / Customer Due Diligence)
+- KYC/CDD (Know Your Customer / Customer Due Diligence)  
 - CFT (Combating the Financing of Terrorism)
-- Financial compliance and regulations
+- Financial compliance regulations
 - Crypto/VASP compliance
 
-STRICT BOUNDARIES:
-- You ONLY answer questions about AML, compliance, CFT, KYC, sanctions, and related financial crime topics
-- If a question is outside your scope, politely redirect the user to compliance topics
-- You do NOT answer general questions about: weather, recipes, history, science, entertainment, etc.
+YOUR PERSONALITY:
+- Professional yet approachable and friendly
+- Clear, concise communicator
+- Patient educator who breaks down complex topics
+- Uses practical examples when helpful
+- Occasionally uses 🐼 and 🎋 emojis tastefully
 
-CONTEXT FROM VERIFIED REGULATORY SOURCES:
+${hasContext ? `VERIFIED REGULATORY SOURCES:
 ${contextText}
 
-RESPONSE GUIDELINES:
-1. Always respond in the same language as the user's question
-2. Base answers on the provided context when available
-3. Cite specific sources (FATF, EBA, Banca d'Italia, etc.) with dates when possible
-4. If certain information is missing, clearly state: "I don't have specific regulatory guidance on this in my knowledge base"
-5. Maintain professional yet friendly tone (you're Panda 🐼!)
-6. Provide practical examples when helpful
-7. Structure answers with bullet points for readability
-8. Always include relevant regulation dates/versions
-9. Use emojis sparingly (🎋 for zen moments, 🐼 for signature)
+When these sources are available, prioritize them in your answer and cite them explicitly.` : `No specific documents found in the knowledge base for this query. Rely on your general expertise in AML/compliance topics.`}
 
-COMPLIANCE DISCLAIMER:
-When appropriate, remind users: "This is general guidance. For specific compliance decisions, consult legal/compliance professionals and verify current regulations."`;
+RESPONSE STRUCTURE:
+1. **Direct Answer First**: Start with a clear, direct answer to the user's question
+2. **Key Points**: Break down the topic into 3-5 bullet points with practical details
+3. **Examples**: Provide a real-world example when helpful
+4. **Sources**: ${hasContext ? 'Cite specific sources with dates when using provided context' : 'Explain that this is general guidance based on common compliance practices'}
+5. **Actionable Advice**: End with practical next steps or considerations
+
+LANGUAGE MATCHING:
+- Always respond in the SAME language as the user's question
+- If user asks in Italian, respond entirely in Italian
+- If user asks in English, respond entirely in English
+- Maintain professional tone in both languages
+
+IMPORTANT GUIDELINES:
+- Be comprehensive but not overwhelming
+- Use bullet points and clear structure
+- Provide specific regulation names, dates, and thresholds when relevant
+- If you're not 100% certain, say so clearly
+- Always remind users to verify current regulations and consult legal professionals for specific decisions
+- Avoid generic responses - be specific and detailed
+- Use analogies and examples to clarify complex concepts
+
+COMPLIANCE DISCLAIMER (when appropriate):
+"⚠️ This is general guidance. For specific compliance decisions, always consult qualified legal/compliance professionals and verify the current version of applicable regulations."`;
 
     const completion = await groq.chat.completions.create({
       messages: [
@@ -116,8 +148,8 @@ When appropriate, remind users: "This is general guidance. For specific complian
         { role: 'user', content: message },
       ],
       model: 'llama-3.3-70b-versatile',
-      temperature: 0.5,
-      max_tokens: 1024,
+      temperature: 0.6, // Slightly higher for more natural responses
+      max_tokens: 2048, // Double the tokens for more comprehensive answers
       top_p: 0.9,
     });
 
