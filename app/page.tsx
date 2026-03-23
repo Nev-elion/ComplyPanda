@@ -418,7 +418,7 @@ ${msg.content}
 ---
 
 *Generated with ComplyPanda 🐼 - Your black & white friend in a world of grey*
-*https://complypanda.com · https://github.com/yourusername/complypanda*
+*https://complypanda.com · https://github.com/Nev-elion/ComplyPanda*
 `;
 
     setReportContent(markdown);
@@ -554,7 +554,7 @@ ${msg.content}
                 {zenMode && <span className="text-xs">Zen</span>}
               </button>
               <a 
-                href="https://github.com/yourusername/complypanda" 
+                href="https://github.com/Nev-elion/ComplyPanda" 
                 target="_blank"
                 rel="noopener noreferrer"
                 className={`flex items-center space-x-2 text-sm font-medium ${darkMode ? 'text-gray-400 hover:text-white' : 'text-gray-600 hover:text-black'} transition-colors`}
@@ -687,7 +687,7 @@ ${msg.content}
           </div>
           <p className={`text-center text-sm mt-6 ${darkMode ? 'text-gray-700' : 'text-gray-400'}`}>
             🐼 Powered by Groq AI · Sources: FATF, EBA, BIS · 
-            <a href="https://github.com/yourusername/complypanda" className={`ml-1 underline ${darkMode ? 'hover:text-gray-500' : 'hover:text-gray-600'}`}>
+            <a href="https://github.com/Nev-elion/ComplyPanda" className={`ml-1 underline ${darkMode ? 'hover:text-gray-500' : 'hover:text-gray-600'}`}>
               View on GitHub
             </a>
           </p>
