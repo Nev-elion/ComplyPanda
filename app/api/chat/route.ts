@@ -18,6 +18,57 @@ function getCacheKey(message: string): string {
   return message.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// ========================================
+// HELPER FUNCTIONS - Web Search & API
+// ========================================
+
+function shouldSearchWeb(message: string): boolean {
+  const triggers = [
+    'ultime', 'recenti', 'aggiornamenti', 'nuove', 'latest', 'recent', 'new',
+    'comunicazione', 'provvedimento', 'circolare', 'parere',
+    '2024', '2025', '2026',
+    'oggi', 'yesterday', 'settimana', 'week', 'mese', 'month',
+  ];
+  return triggers.some(trigger => message.toLowerCase().includes(trigger));
+}
+
+function shouldQueryAPIs(message: string): boolean {
+  const triggers = [
+    'sanzione', 'sanctioned', 'pep', 'politically exposed',
+    'lista', 'blacklist', 'sdn', 'ofac',
+    'società', 'company', 'azienda', 'impresa',
+    'è sanzionata', 'is sanctioned', 'check',
+  ];
+  return triggers.some(trigger => message.toLowerCase().includes(trigger));
+}
+
+function detectQueryType(message: string): string {
+  if (/sanzione|sanction|lista|blacklist|sdn|ofac/i.test(message)) return 'sanctions';
+  if (/società|company|azienda|impresa|firm/i.test(message)) return 'company';
+  if (/normativa|legge|direttiva|regolamento|directive|regulation/i.test(message)) return 'legislation';
+  return 'all';
+}
+
+function extractEntityName(message: string): string {
+  // Estrai nome tra virgolette
+  const quoted = message.match(/"([^"]+)"/);
+  if (quoted) return quoted[1];
+  
+  // Cerca dopo parole chiave
+  const afterCheck = message.match(/(?:check|verifica|controlla|cerca)\s+([A-Z][a-zA-Z\s&.,]+?)(?:\s+(?:è|is|nella|in|sul))/i);
+  if (afterCheck) return afterCheck[1].trim();
+  
+  // Fallback: prendi parole capitalizzate
+  const words = message.split(' ').filter(w => /^[A-Z]/.test(w));
+  if (words.length > 0) return words.slice(-3).join(' ');
+  
+  return message.split(' ').slice(0, 5).join(' '); // Fallback totale
+}
+
+// ========================================
+// AI INTENT CLASSIFICATION
+// ========================================
+
 async function classifyIntent(message: string): Promise<{
   primary_intent: 'greeting' | 'how_are_you' | 'compliance_question' | 'off_topic';
   has_compliance_question: boolean;
@@ -57,12 +108,6 @@ IMPORTANT: If message contains both greeting AND compliance question, set:
 - primary_intent: "compliance_question"
 - has_compliance_question: true
 
-Examples:
-"ciao" → primary_intent: "greeting", has_compliance_question: false
-"cos'è la fatf?" → primary_intent: "compliance_question", has_compliance_question: true
-"ciao, come funziona il kyc?" → primary_intent: "compliance_question", has_compliance_question: true
-"come stai? poi mi serve capire l'AML" → primary_intent: "compliance_question", has_compliance_question: true
-
 Return ONLY the JSON.`;
 
   try {
@@ -97,6 +142,10 @@ Return ONLY the JSON.`;
   }
 }
 
+// ========================================
+// MAIN ROUTE HANDLER
+// ========================================
+
 export async function POST(request: NextRequest) {
   try {
     const { message } = await request.json();
@@ -105,15 +154,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid message' }, { status: 400 });
     }
 
+    // AI-powered intent classification
     const { primary_intent, has_compliance_question, language: lang } = await classifyIntent(message);
 
+    // If there's a compliance question anywhere, prioritize that
     if (has_compliance_question || primary_intent === 'compliance_question') {
+      // Check cache
       const cacheKey = getCacheKey(message);
       const cached = responseCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         return NextResponse.json({ response: cached.response, cached: true });
       }
 
+      // ========================================
+      // 1. SEARCH DATABASE
+      // ========================================
       let { data: context } = await supabase
         .from('aml_knowledge')
         .select('content, source, title, date')
@@ -128,11 +183,89 @@ export async function POST(request: NextRequest) {
         context = fallback || [];
       }
 
-      const hasContext = context && context.length > 0;
-      const contextText = hasContext
-        ? context.map(item => `[${item.source}${item.date ? ` - ${item.date}` : ''}] ${item.title}:\n${item.content}`).join('\n\n---\n\n')
+      // ========================================
+      // 2. SEARCH WEB (if needed)
+      // ========================================
+      let webContext = '';
+      if (shouldSearchWeb(message)) {
+        try {
+          console.log('🌐 Triggering web search...');
+          const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://comply-panda.vercel.app/';
+          const webResponse = await fetch(`${baseUrl}/api/search-external`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: message }),
+          });
+          
+          if (webResponse.ok) {
+            const webData = await webResponse.json();
+            
+            if (webData.content && webData.content.length > 0) {
+              webContext = webData.content
+                .map((item: any) => `[WEB - ${item.source}] ${item.title}\n${item.content}`)
+                .join('\n\n---\n\n');
+              console.log(`✅ Found ${webData.content.length} web results`);
+            }
+          }
+        } catch (error) {
+          console.error('❌ Web search error:', error);
+        }
+      }
+
+      // ========================================
+      // 3. QUERY EXTERNAL APIs (if needed)
+      // ========================================
+      let apiContext = '';
+      if (shouldQueryAPIs(message)) {
+        try {
+          console.log('🔍 Querying external APIs...');
+          const entityName = extractEntityName(message);
+          const queryType = detectQueryType(message);
+          
+          const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://comply-panda.vercel.app/';
+          const apiResponse = await fetch(`${baseUrl}/api/external-apis`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: entityName,
+              type: queryType,
+            }),
+          });
+          
+          if (apiResponse.ok) {
+            const apiData = await apiResponse.json();
+            
+            if (apiData.results && apiData.results.length > 0) {
+              apiContext = apiData.results
+                .map((item: any) => {
+                  const dataStr = typeof item.data === 'object' 
+                    ? JSON.stringify(item.data, null, 2).substring(0, 1000)
+                    : String(item.data).substring(0, 1000);
+                  return `[API - ${item.source}]\n${dataStr}`;
+                })
+                .join('\n\n---\n\n');
+              console.log(`✅ Found ${apiData.results.length} API results`);
+            }
+          }
+        } catch (error) {
+          console.error('❌ API query error:', error);
+        }
+      }
+
+      // ========================================
+      // 4. COMBINE ALL CONTEXTS
+      // ========================================
+      const dbContext = context && context.length > 0
+        ? context.map(item => `[DB - ${item.source}${item.date ? ` - ${item.date}` : ''}] ${item.title}:\n${item.content}`).join('\n\n---\n\n')
         : '';
 
+      const allContexts = [dbContext, webContext, apiContext].filter(Boolean);
+      const hasContext = allContexts.length > 0;
+      const contextText = allContexts.join('\n\n━━━━━━ ADDITIONAL SOURCES ━━━━━━\n\n');
+
+      // ========================================
+      // 5. GENERATE AI RESPONSE
+      // ========================================
       const systemPrompt = lang === 'it'
         ? `Sei Panda 🐼, un esperto italiano di compliance AML/CFT.
 
@@ -155,16 +288,18 @@ STRUTTURA:
 2. Poi vai DIRETTAMENTE alla risposta della domanda vera
 3. Dettagli chiave (3-5 punti con •)
 4. Esempio pratico se utile
-5. Fonti se disponibili
+5. Fonti: cita esplicitamente [DB - fonte], [WEB - fonte], [API - fonte] quando usi informazioni
 
-${hasContext ? `FONTI DAL DATABASE:
+${hasContext ? `FONTI DISPONIBILI:
 ${contextText}
 
-Usa queste fonti. Cita esplicitamente fonte e data.` : 'Nessun documento trovato. Usa expertise generale.'}
+Usa queste fonti. Cita esplicitamente fonte e tipo (DB/WEB/API) quando fornisci informazioni.
+Se ci sono risultati WEB, sono le informazioni PIÙ RECENTI.
+Se ci sono risultati API, sono verifiche REAL-TIME su liste sanctions/companies.` : 'Nessun documento trovato. Usa expertise generale AML/CFT.'}
 
 Messaggio utente: "${message}"
 
-Rispondi in modo naturale e completo, senza virgolette.`
+Rispondi in modo naturale e completo, senza virgolette. Cita le fonti quando usi informazioni specifiche.`
         : `You are Panda 🐼, an AML/CFT compliance expert.
 
 IMPORTANT: Always respond in natural English. NEVER in Italian.
@@ -186,16 +321,18 @@ STRUCTURE:
 2. Then go DIRECTLY to answering the real question
 3. Key details (3-5 points with •)
 4. Practical example if useful
-5. Sources if available
+5. Sources: explicitly cite [DB - source], [WEB - source], [API - source] when using information
 
-${hasContext ? `DATABASE SOURCES:
+${hasContext ? `AVAILABLE SOURCES:
 ${contextText}
 
-Use these sources. Explicitly cite source and date.` : 'No documents found. Use general expertise.'}
+Use these sources. Explicitly cite source and type (DB/WEB/API) when providing information.
+If there are WEB results, they are the MOST RECENT information.
+If there are API results, they are REAL-TIME verifications on sanctions/company lists.` : 'No documents found. Use general AML/CFT expertise.'}
 
 User message: "${message}"
 
-Respond naturally and completely, without quotation marks.`;
+Respond naturally and completely, without quotation marks. Cite sources when using specific information.`;
 
       const completion = await groq.chat.completions.create({
         messages: [
@@ -219,8 +356,10 @@ Respond naturally and completely, without quotation marks.`;
         response = response.slice(1, -1);
       }
 
+      // Cache response
       responseCache.set(cacheKey, { response, timestamp: Date.now() });
 
+      // Clean cache if too large
       if (responseCache.size > 100) {
         const entries = Array.from(responseCache.entries());
         const sorted = entries.sort((a, b) => b[1].timestamp - a[1].timestamp);
@@ -231,6 +370,9 @@ Respond naturally and completely, without quotation marks.`;
       return NextResponse.json({ response, cached: false });
     }
 
+    // ========================================
+    // HANDLE SIMPLE GREETINGS
+    // ========================================
     const simpleResponsePrompt = lang === 'it'
       ? `Sei Panda 🐼, rispondi a questo saluto in modo naturale e breve (max 2 righe):
 
@@ -265,7 +407,7 @@ Write response without quotation marks.`;
     let simpleResponse = simpleCompletion.choices[0]?.message?.content?.trim() ||
       (lang === 'it' ? 'Ciao! Come posso aiutarti?' : 'Hello! How can I help?');
 
-    // Remove unwanted quotes - ES2017 compatible
+    // Remove unwanted quotes
     simpleResponse = simpleResponse.replace(/^["']|["']$/g, '');
     if (simpleResponse.startsWith('"') && simpleResponse.endsWith('"')) {
       simpleResponse = simpleResponse.slice(1, -1);
