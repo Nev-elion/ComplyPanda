@@ -18,7 +18,6 @@ function getCacheKey(message: string): string {
   return message.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-// Enhanced AI intent classification with multi-intent support
 async function classifyIntent(message: string): Promise<{
   primary_intent: 'greeting' | 'how_are_you' | 'compliance_question' | 'off_topic';
   has_compliance_question: boolean;
@@ -106,19 +105,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid message' }, { status: 400 });
     }
 
-    // AI-powered intent classification
     const { primary_intent, has_compliance_question, language: lang } = await classifyIntent(message);
 
-    // If there's a compliance question anywhere, prioritize that
     if (has_compliance_question || primary_intent === 'compliance_question') {
-      // Check cache
       const cacheKey = getCacheKey(message);
       const cached = responseCache.get(cacheKey);
       if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
         return NextResponse.json({ response: cached.response, cached: true });
       }
 
-      // Search database
       let { data: context } = await supabase
         .from('aml_knowledge')
         .select('content, source, title, date')
@@ -138,7 +133,6 @@ export async function POST(request: NextRequest) {
         ? context.map(item => `[${item.source}${item.date ? ` - ${item.date}` : ''}] ${item.title}:\n${item.content}`).join('\n\n---\n\n')
         : '';
 
-      // NO MORE HARDCODED RESPONSES - AI generates everything
       const systemPrompt = lang === 'it'
         ? `Sei Panda 🐼, un esperto italiano di compliance AML/CFT.
 
@@ -216,9 +210,14 @@ Respond naturally and completely, without quotation marks.`;
       let response = completion.choices[0]?.message?.content || 
         (lang === 'it' ? 'Errore. Riprova.' : 'Error. Try again.');
 
-      // Remove unwanted quotes from AI response
-      response = response.replace(/^["']|["']$/g, ''); // Remove leading/trailing quotes
-      response = response.replace(/^"(.+)"$/s, '$1'); // Remove wrapping quotes
+      // Remove unwanted quotes - ES2017 compatible
+      response = response.replace(/^["']|["']$/g, '');
+      if (response.startsWith('"') && response.endsWith('"')) {
+        response = response.slice(1, -1);
+      }
+      if (response.startsWith("'") && response.endsWith("'")) {
+        response = response.slice(1, -1);
+      }
 
       responseCache.set(cacheKey, { response, timestamp: Date.now() });
 
@@ -232,8 +231,6 @@ Respond naturally and completely, without quotation marks.`;
       return NextResponse.json({ response, cached: false });
     }
 
-    // Handle simple greetings or how_are_you (ONLY if no compliance question)
-    // Generate response with AI for natural language
     const simpleResponsePrompt = lang === 'it'
       ? `Sei Panda 🐼, rispondi a questo saluto in modo naturale e breve (max 2 righe):
 
@@ -268,9 +265,14 @@ Write response without quotation marks.`;
     let simpleResponse = simpleCompletion.choices[0]?.message?.content?.trim() ||
       (lang === 'it' ? 'Ciao! Come posso aiutarti?' : 'Hello! How can I help?');
 
-    // Remove unwanted quotes from AI response
-    simpleResponse = simpleResponse.replace(/^["']|["']$/g, ''); // Remove leading/trailing quotes
-    simpleResponse = simpleResponse.replace(/^"(.+)"$/s, '$1'); // Remove wrapping quotes
+    // Remove unwanted quotes - ES2017 compatible
+    simpleResponse = simpleResponse.replace(/^["']|["']$/g, '');
+    if (simpleResponse.startsWith('"') && simpleResponse.endsWith('"')) {
+      simpleResponse = simpleResponse.slice(1, -1);
+    }
+    if (simpleResponse.startsWith("'") && simpleResponse.endsWith("'")) {
+      simpleResponse = simpleResponse.slice(1, -1);
+    }
 
     return NextResponse.json({ response: simpleResponse });
 
