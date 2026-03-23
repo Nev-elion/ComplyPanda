@@ -152,88 +152,127 @@ No data sold. No tracking. Your queries stay private.
 
 </div>
 
+## 🎋 Special Features
+
+### Zen Mode
+Activate peaceful focus mode with falling sakura petals and ambient sounds. Perfect for deep compliance research.
+
+*Psst... try the Konami code: ↑↑↓↓←→←→BA*
+
+### Dark Mode
+Automatically switches at night (8 PM - 6 AM) or toggle manually. Easy on the eyes during late-night compliance reviews.
+
+### Report Generation
+Export entire conversations as Markdown. Perfect for:
+- Compliance documentation
+- Team knowledge sharing
+- Audit trails
+- Upload to Google NotebookLM for AI-powered summaries
+
 ---
 
-## 🚀 Quick Start
+## 🌍 Use Cases
 
-```bash
-🎋 Special Features
-Zen Mode
-Activate peaceful focus mode with falling sakura petals and ambient sounds. Perfect for deep compliance research.
-Psst... try the Konami code: ↑↑↓↓←→←→BA
-Dark Mode
-Automatically switches at night (8 PM - 6 AM) or toggle manually. Easy on the eyes during late-night compliance reviews.
-Report Generation
-Export entire conversations as Markdown. Perfect for:
-Compliance documentation
-Team knowledge sharing
-Audit trails
-Upload to Google NotebookLM for AI-powered summaries
-🌍 Use Cases
-<table> <tr> <td width="50%">
-🏦 Fintech Startups
+<table>
+<tr>
+<td width="50%">
+
+### 🏦 **Fintech Startups**
 Quickly understand regulatory requirements for licensing, KYC, and AML compliance.
-⚖️ Legal Teams
+
+### ⚖️ **Legal Teams**
 Fast research on Italian and EU compliance regulations without reading 500-page documents.
-</td> <td width="50%">
-🔍 Compliance Officers
+
+</td>
+<td width="50%">
+
+### 🔍 **Compliance Officers**
 Daily reference for AML/CFT procedures, sanctions screening, and regulatory updates.
-🎓 Students & Researchers
+
+### 🎓 **Students & Researchers**
 Learn about financial crime prevention and international compliance standards.
-</td> </tr> </table>
-📊 Roadmap
- 🌐 Multi-language support (Spanish, French, German)
- 📱 Mobile app (iOS & Android)
- 🔔 Regulatory update notifications
- 📈 Compliance risk calculator
- 🤝 Integration with compliance software (ComplyAdvantage, Chainalysis)
- 🎤 Voice input support
- 📧 Email digest of weekly compliance updates
-Want to contribute? Check out our Contributing Guide
-🤝 Contributing
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📊 Roadmap
+
+- [ ] 🌐 Multi-language support (Spanish, French, German)
+- [ ] 📱 Mobile app (iOS & Android)
+- [ ] 🔔 Regulatory update notifications
+- [ ] 📈 Compliance risk calculator
+- [ ] 🤝 Integration with compliance software (ComplyAdvantage, Chainalysis)
+- [ ] 🎤 Voice input support
+- [ ] 📧 Email digest of weekly compliance updates
+
+**Want to contribute?** Check out our [Contributing Guide](CONTRIBUTING.md)
+
+---
+
+## 🤝 Contributing
+
 We welcome contributions from the community! Whether it's:
-🐛 Bug reports
-💡 Feature requests
-📝 Documentation improvements
-🔧 Code contributions
-See CONTRIBUTING.md for guidelines.
-📄 License
-This project is licensed under the MIT License - see the LICENSE file for details.
-TL;DR: You can use, modify, and distribute this project freely, even commercially. Just keep the copyright notice.
-⚠️ Disclaimer
-ComplyPanda provides general guidance on AML/CFT compliance topics based on publicly available regulatory documents.
-This is NOT legal advice. For specific compliance decisions, always:
-Consult qualified legal and compliance professionals
-Verify the current version of applicable regulations
-Conduct your own due diligence
+
+- 🐛 Bug reports
+- 💡 Feature requests  
+- 📝 Documentation improvements
+- 🔧 Code contributions
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+---
+
+## 📄 License
+
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+**TL;DR:** You can use, modify, and distribute this project freely, even commercially. Just keep the copyright notice.
+
+---
+
+## ⚠️ Disclaimer
+
+ComplyPanda provides **general guidance** on AML/CFT compliance topics based on publicly available regulatory documents. 
+
+**This is NOT legal advice.** For specific compliance decisions, always:
+- Consult qualified legal and compliance professionals
+- Verify the current version of applicable regulations
+- Conduct your own due diligence
+
 ComplyPanda and its contributors are not liable for any decisions made based on information provided by this tool.
-🙏 Acknowledgments
-Built with love by Christian Ciniero in 2026.
+
+---
+
+## 🙏 Acknowledgments
+
+Built with love by [Christian Ciniero](https://github.com/Nev-elion) in 2026.
+
 Special thanks to:
-FATF - For setting international AML/CFT standards
-Banca d'Italia & UIF - For Italian regulatory guidance
-Groq - For blazing-fast AI inference
-Supabase - For the incredible open-source database
-Vercel - For seamless edge deployment
-📧 Contact
-Author: Christian Ciniero
-GitHub: @Nev-elion
-Email: christian.ciniero@qonto.com
-Live Demo: complypanda.vercel.app
+- **FATF** - For setting international AML/CFT standards
+- **Banca d'Italia & UIF** - For Italian regulatory guidance
+- **Groq** - For blazing-fast AI inference
+- **Supabase** - For the incredible open-source database
+- **Vercel** - For seamless edge deployment
+
+---
+
+## 📧 Contact
+
+- **Author:** Christian Ciniero
+- **GitHub:** [@Nev-elion](https://github.com/Nev-elion)
+- **Live Demo:** [complypanda.vercel.app](https://complypanda.vercel.app)
+
+---
+
 <div align="center">
-⭐ If you find ComplyPanda useful, give it a star!
+
+### ⭐ If you find ComplyPanda useful, give it a star!
+
 Made with 🎋 and ☕ in Italy
-🐼 Your black & white friend in a world of grey
-</div> ```# Clone the repository
-git clone https://github.com/Nev-elion/ComplyPanda.git
 
-# Install dependencies
-cd ComplyPanda
-npm install
+**🐼 Your black & white friend in a world of grey**
 
-# Set up environment variables
-cp .env.example .env.local
-# Add your GROQ_API_KEY and SUPABASE credentials
-
-# Run development server
-npm run dev
+</div>
