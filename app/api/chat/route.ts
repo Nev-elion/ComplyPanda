@@ -153,6 +153,8 @@ STILE:
 - Diretto e utile
 - Usa esempi quando aiutano
 - NO frasi template tipo "Pronto ad aiutarti"
+- NON usare MAI virgolette (" ") all'inizio o fine della risposta
+- Scrivi come se stessi parlando naturalmente con un collega
 
 STRUTTURA:
 1. Se c'è un saluto nel messaggio: rispondi brevemente (es. "Ciao! Tutto bene, grazie 🐼")
@@ -168,7 +170,7 @@ Usa queste fonti. Cita esplicitamente fonte e data.` : 'Nessun documento trovato
 
 Messaggio utente: "${message}"
 
-Rispondi in modo naturale e completo.`
+Rispondi in modo naturale e completo, senza virgolette.`
         : `You are Panda 🐼, an AML/CFT compliance expert.
 
 IMPORTANT: Always respond in natural English. NEVER in Italian.
@@ -182,6 +184,8 @@ STYLE:
 - Direct and useful
 - Use examples when helpful
 - NO template phrases like "Ready to help"
+- NEVER use quotation marks (" ") at the start or end of your response
+- Write as if you're naturally talking to a colleague
 
 STRUCTURE:
 1. If there's a greeting: respond briefly (e.g., "Hey! I'm great, thanks 🐼")
@@ -197,7 +201,7 @@ Use these sources. Explicitly cite source and date.` : 'No documents found. Use 
 
 User message: "${message}"
 
-Respond naturally and completely.`;
+Respond naturally and completely, without quotation marks.`;
 
       const completion = await groq.chat.completions.create({
         messages: [
@@ -209,8 +213,12 @@ Respond naturally and completely.`;
         max_tokens: 1800,
       });
 
-      const response = completion.choices[0]?.message?.content || 
+      let response = completion.choices[0]?.message?.content || 
         (lang === 'it' ? 'Errore. Riprova.' : 'Error. Try again.');
+
+      // Remove unwanted quotes from AI response
+      response = response.replace(/^["']|["']$/g, ''); // Remove leading/trailing quotes
+      response = response.replace(/^"(.+)"$/s, '$1'); // Remove wrapping quotes
 
       responseCache.set(cacheKey, { response, timestamp: Date.now() });
 
@@ -231,12 +239,24 @@ Respond naturally and completely.`;
 
 "${message}"
 
-Rispondi in italiano, con personalità friendly. Invita l'utente a fare domande su AML/CFT.`
+IMPORTANTE: 
+- NON usare virgolette (" ") nella risposta
+- Scrivi il testo direttamente senza quotation marks
+- Rispondi in italiano con personalità friendly
+- Invita l'utente a fare domande su AML/CFT
+
+Scrivi la risposta senza virgolette.`
       : `You are Panda 🐼, respond to this greeting naturally and briefly (max 2 lines):
 
 "${message}"
 
-Respond in English, with friendly personality. Invite user to ask about AML/CFT.`;
+IMPORTANT:
+- Do NOT use quotation marks (" ") in your response
+- Write text directly without quotes
+- Respond in English with friendly personality
+- Invite user to ask about AML/CFT
+
+Write response without quotation marks.`;
 
     const simpleCompletion = await groq.chat.completions.create({
       messages: [{ role: 'user', content: simpleResponsePrompt }],
@@ -245,14 +265,24 @@ Respond in English, with friendly personality. Invite user to ask about AML/CFT.
       max_tokens: 100,
     });
 
-    const simpleResponse = simpleCompletion.choices[0]?.message?.content?.trim() ||
+    let simpleResponse = simpleCompletion.choices[0]?.message?.content?.trim() ||
       (lang === 'it' ? 'Ciao! Come posso aiutarti?' : 'Hello! How can I help?');
+
+    // Remove unwanted quotes from AI response
+    simpleResponse = simpleResponse.replace(/^["']|["']$/g, ''); // Remove leading/trailing quotes
+    simpleResponse = simpleResponse.replace(/^"(.+)"$/s, '$1'); // Remove wrapping quotes
 
     return NextResponse.json({ response: simpleResponse });
 
   } catch (error: any) {
     console.error('Chat API error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json(
+      { 
+        error: 'Internal server error',
+        details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      },
+      { status: 500 }
+    );
   }
 }
 
