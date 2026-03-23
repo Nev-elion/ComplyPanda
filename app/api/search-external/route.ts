@@ -2,10 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
-// ========================================
-// TYPES
-// ========================================
-
 interface SearchResult {
   source: string;
   url: string;
@@ -28,41 +24,18 @@ interface ContentResult {
   source: string;
 }
 
-// ========================================
-// SITI UFFICIALI DA SCANSIONARE
-// ========================================
-
 const SOURCES = [
+  {
+    name: 'Banca Italia - News',
+    url: 'https://www.bancaditalia.it/media/notizie/index.html',
+    selector: '.news-list, .content, main',
+  },
   {
     name: 'UIF - Comunicazioni',
     url: 'https://uif.bancaditalia.it/normativa/norm-comunicazioni-uif/index.html',
     selector: '.content, main, article',
   },
-  {
-    name: 'UIF - Quaderni',
-    url: 'https://uif.bancaditalia.it/pubblicazioni/quaderni/index.html',
-    selector: '.content, main, article',
-  },
-  {
-    name: 'Banca Italia - News AML',
-    url: 'https://www.bancaditalia.it/media/notizie/index.html',
-    selector: '.news-list, .content',
-  },
-  {
-    name: 'FATF - News',
-    url: 'https://www.fatf-gafi.org/en/the-fatf/what-we-do.html',
-    selector: 'main, .content',
-  },
-  {
-    name: 'EBA - AML Updates',
-    url: 'https://www.eba.europa.eu/regulation-and-policy/anti-money-laundering-and-countering-financing-terrorism',
-    selector: '.content, main',
-  },
 ];
-
-// ========================================
-// DIRECT WEB SCRAPING
-// ========================================
 
 async function scrapeSite(source: typeof SOURCES[0], query: string): Promise<ScrapeResult | null> {
   try {
@@ -74,31 +47,22 @@ async function scrapeSite(source: typeof SOURCES[0], query: string): Promise<Scr
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
       },
-      timeout: 10000,
+      timeout: 15000,
     });
 
     const $ = cheerio.load(data);
-    
     $('script, style, nav, header, footer').remove();
     
     const content = $(source.selector).first().text()
       .replace(/\s+/g, ' ')
       .trim();
 
-    const queryLower = query.toLowerCase();
-    const contentLower = content.toLowerCase();
-    
-    if (contentLower.includes(queryLower)) {
-      const index = contentLower.indexOf(queryLower);
-      const start = Math.max(0, index - 500);
-      const end = Math.min(content.length, index + 500);
-      const snippet = content.substring(start, end);
-
+    if (content.length > 100) {
       return {
         source: source.name,
         url: source.url,
         found: true,
-        content: snippet,
+        content: content.substring(0, 500),
         fullContent: content.substring(0, 3000),
       };
     }
@@ -111,66 +75,45 @@ async function scrapeSite(source: typeof SOURCES[0], query: string): Promise<Scr
   }
 }
 
-// ========================================
-// SEARCH SPECIFIC PAGES FOR KEYWORDS
-// ========================================
-
-async function searchSpecificPages(query: string): Promise<SearchResult[]> {
+async function fallbackDuckDuckGo(query: string): Promise<SearchResult[]> {
   try {
-    const searches = [
-      {
-        name: 'Banca Italia Search',
-        url: `https://www.bancaditalia.it/homepage/ricerca/index.html?q=${encodeURIComponent(query)}`,
+    console.log(`🦆 Trying DuckDuckGo for: "${query}"`);
+    
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query + ' antiriciclaggio OR AML OR compliance')}`;
+    
+    const { data } = await axios.get(ddgUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
       },
-      {
-        name: 'FATF Search',
-        url: `https://www.fatf-gafi.org/en/search-results.html?q=${encodeURIComponent(query)}`,
-      },
-    ];
+      timeout: 15000,
+    });
 
+    const $ = cheerio.load(data);
     const results: SearchResult[] = [];
 
-    for (const search of searches) {
-      try {
-        const { data } = await axios.get(search.url, {
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-          },
-          timeout: 10000,
+    $('.result, .results_links_deep').slice(0, 5).each((_, elem) => {
+      const title = $(elem).find('a.result__a').text().trim();
+      const link = $(elem).find('a.result__a').attr('href');
+      const snippet = $(elem).find('.result__snippet').text().trim();
+
+      if (title && link) {
+        results.push({
+          source: 'DuckDuckGo',
+          title,
+          url: link,
+          snippet,
         });
-
-        const $ = cheerio.load(data);
-        
-        $('.search-result, .result, .news-item').slice(0, 3).each((_, elem) => {
-          const title = $(elem).find('h2, h3, .title').text().trim();
-          const link = $(elem).find('a').attr('href');
-          const snippet = $(elem).find('p, .description, .snippet').text().trim();
-
-          if (title && link) {
-            results.push({
-              source: search.name,
-              title,
-              url: link.startsWith('http') ? link : `https://www.bancaditalia.it${link}`,
-              snippet,
-            });
-          }
-        });
-
-      } catch (error: any) {
-        console.error(`Error searching ${search.name}:`, error.message);
       }
-    }
+    });
 
+    console.log(`✅ DuckDuckGo found ${results.length} results`);
     return results;
 
-  } catch (error) {
+  } catch (error: any) {
+    console.error('❌ DuckDuckGo failed:', error.message);
     return [];
   }
 }
-
-// ========================================
-// MAIN ROUTE
-// ========================================
 
 export async function POST(request: NextRequest) {
   try {
@@ -182,26 +125,31 @@ export async function POST(request: NextRequest) {
 
     console.log(`\n🌐 Web search for: "${query}"`);
 
+    // Prova scraping diretto
     const scrapePromises = SOURCES.map(source => scrapeSite(source, query));
     const scrapeResults = await Promise.all(scrapePromises);
     const validScrapes = scrapeResults.filter((r): r is ScrapeResult => r !== null);
 
-    const searchResults = await searchSpecificPages(query);
+    console.log(`📊 Direct scrapes: ${validScrapes.length}/${SOURCES.length}`);
+
+    // Sempre prova DuckDuckGo come backup
+    const ddgResults = await fallbackDuckDuckGo(query);
 
     const allResults: SearchResult[] = [
       ...validScrapes.map(r => ({
-        title: `${r.source} - Match trovato`,
+        title: `${r.source} - Contenuto trovato`,
         link: r.url,
         snippet: r.content,
         source: r.source,
         url: r.url,
       })),
-      ...searchResults,
+      ...ddgResults,
     ];
 
-    console.log(`✅ Found ${allResults.length} results`);
+    console.log(`✅ Total results: ${allResults.length}`);
 
-    const contentPromises = allResults.slice(0, 2).map(async (result): Promise<ContentResult> => {
+    // Scrape content dalle prime 2 pagine
+    const contentPromises = allResults.slice(0, 3).map(async (result): Promise<ContentResult> => {
       try {
         const { data } = await axios.get(result.url, {
           headers: { 'User-Agent': 'Mozilla/5.0' },
@@ -216,7 +164,7 @@ export async function POST(request: NextRequest) {
           .text()
           .replace(/\s+/g, ' ')
           .trim()
-          .substring(0, 3000);
+          .substring(0, 2000);
 
         return {
           url: result.url,
@@ -229,7 +177,7 @@ export async function POST(request: NextRequest) {
         return {
           url: result.url,
           title: result.title,
-          content: result.snippet,
+          content: result.snippet || 'Contenuto non disponibile',
           source: result.source,
         };
       }
@@ -239,7 +187,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       results: allResults,
-      content: content.filter(c => c.content.length > 200),
+      content: content.filter(c => c.content.length > 100),
     });
 
   } catch (error: any) {
@@ -251,4 +199,5 @@ export async function POST(request: NextRequest) {
   }
 }
 
-export const runtime = 'edge';
+// ✅ CAMBIA DA edge A nodejs
+export const runtime = 'nodejs';
