@@ -79,20 +79,16 @@ async function scrapeSite(source: typeof SOURCES[0], query: string): Promise<Scr
 
     const $ = cheerio.load(data);
     
-    // Rimuovi elementi non utili
     $('script, style, nav, header, footer').remove();
     
-    // Estrai contenuto
     const content = $(source.selector).first().text()
       .replace(/\s+/g, ' ')
       .trim();
 
-    // Cerca query nel contenuto (case-insensitive)
     const queryLower = query.toLowerCase();
     const contentLower = content.toLowerCase();
     
     if (contentLower.includes(queryLower)) {
-      // Estrai contesto attorno alla query (500 chars prima/dopo)
       const index = contentLower.indexOf(queryLower);
       const start = Math.max(0, index - 500);
       const end = Math.min(content.length, index + 500);
@@ -145,7 +141,6 @@ async function searchSpecificPages(query: string): Promise<SearchResult[]> {
 
         const $ = cheerio.load(data);
         
-        // Estrai primi risultati di ricerca
         $('.search-result, .result, .news-item').slice(0, 3).each((_, elem) => {
           const title = $(elem).find('h2, h3, .title').text().trim();
           const link = $(elem).find('a').attr('href');
@@ -187,15 +182,12 @@ export async function POST(request: NextRequest) {
 
     console.log(`\n🌐 Web search for: "${query}"`);
 
-    // 1. Scrape siti ufficiali
     const scrapePromises = SOURCES.map(source => scrapeSite(source, query));
     const scrapeResults = await Promise.all(scrapePromises);
     const validScrapes = scrapeResults.filter((r): r is ScrapeResult => r !== null);
 
-    // 2. Search su motori di ricerca interni
     const searchResults = await searchSpecificPages(query);
 
-    // 3. Combina risultati
     const allResults: SearchResult[] = [
       ...validScrapes.map(r => ({
         title: `${r.source} - Match trovato`,
@@ -209,7 +201,6 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Found ${allResults.length} results`);
 
-    // 4. Se ci sono risultati, scrape content completo dalle prime 2 pagine
     const contentPromises = allResults.slice(0, 2).map(async (result): Promise<ContentResult> => {
       try {
         const { data } = await axios.get(result.url, {

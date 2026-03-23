@@ -10,7 +10,6 @@ async function checkEUSanctions(name: string) {
   try {
     console.log(`🇪🇺 Checking EU Sanctions: "${name}"`);
     
-    // EU Sanctions Map - ricerca pubblica
     const { data } = await axios.get(
       `https://www.sanctionsmap.eu/#/main/search/${encodeURIComponent(name)}`,
       {
@@ -40,7 +39,6 @@ async function checkOFAC(name: string) {
   try {
     console.log(`🇺🇸 Checking OFAC: "${name}"`);
     
-    // OFAC Public Search
     const { data } = await axios.get(
       'https://sanctionssearch.ofac.treas.gov/',
       {
@@ -107,7 +105,6 @@ async function searchCompany(name: string) {
   try {
     console.log(`🏢 Searching company: "${name}"`);
     
-    // Companies House UK (free)
     const { data } = await axios.get(
       `https://find-and-update.company-information.service.gov.uk/search?q=${encodeURIComponent(name)}`,
       {
@@ -160,7 +157,6 @@ export async function POST(request: NextRequest) {
 
     const results: any[] = [];
 
-    // Sanctions
     if (type === 'sanctions' || type === 'all') {
       const [eu, ofac, un] = await Promise.all([
         checkEUSanctions(query),
@@ -173,7 +169,6 @@ export async function POST(request: NextRequest) {
       if (un) results.push(un);
     }
 
-    // Company
     if (type === 'company' || type === 'all') {
       const company = await searchCompany(query);
       if (company) results.push(company);
