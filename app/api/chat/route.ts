@@ -29,6 +29,8 @@ function shouldSearchWeb(message: string): boolean {
     'ultime', 'recenti', 'aggiornamenti', 'nuove', 'latest', 'recent', 'new',
     'oggi', 'ieri', 'yesterday', 'settimana', 'week', 'mese', 'month',
     '2024', '2025', '2026',
+    'notizie', 'news', 'novità', 'update', 'aggiorna',
+    'dimostra', 'cerca', 'trova', 'search',
   ];
   
   const docTriggers = [
@@ -189,6 +191,10 @@ export async function POST(request: NextRequest) {
         context.length < 3 || 
         (context.every(c => !c.date || new Date(c.date) < new Date('2023-01-01')));
 
+      console.log(`📊 Database results: ${context?.length || 0}`);
+      console.log(`🌐 Should search web: ${shouldSearchWeb(message)}`);
+      console.log(`⚡ Should prioritize web: ${shouldPrioritizeWeb}`);
+
       if (!context || context.length === 0) {
         console.log('⚠️  No database results, will rely on web search');
         context = [];
@@ -199,6 +205,8 @@ export async function POST(request: NextRequest) {
       // ========================================
       let webContext = '';
       const needsWebSearch = shouldSearchWeb(message) || shouldPrioritizeWeb;
+
+      console.log(`🔍 Web search decision: ${needsWebSearch ? 'YES' : 'NO'}`);
 
       if (needsWebSearch) {
         try {
@@ -218,10 +226,14 @@ export async function POST(request: NextRequest) {
                 .map((item: any) => `[WEB - ${item.source}] ${item.title}\n${item.content}`)
                 .join('\n\n---\n\n');
               console.log(`✅ Found ${webData.content.length} web results`);
+            } else {
+              console.log('⚠️  Web search returned no results');
             }
+          } else {
+            console.error(`❌ Web search failed: ${webResponse.status}`);
           }
-        } catch (error) {
-          console.error('❌ Web search error:', error);
+        } catch (error: any) {
+          console.error('❌ Web search error:', error.message);
         }
       }
 
@@ -260,7 +272,7 @@ export async function POST(request: NextRequest) {
               console.log(`✅ Found ${apiData.results.length} API results`);
             }
           }
-        } catch (error) {
+        } catch (error: any) {
           console.error('❌ API query error:', error);
         }
       }
@@ -309,17 +321,27 @@ PRIORITÀ FONTI (dal più al meno affidabile):
 2. [WEB - fonte] = Informazioni AGGIORNATE da siti ufficiali (2024-2026)
 3. [DB - fonte] = Documentazione generale (potrebbe essere datata)
 
-REGOLE:
+REGOLE FONDAMENTALI:
+- CITA SOLO fonti che ti ho fornito con tag [DB], [WEB], [API]
+- NON inventare MAI fonti (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, ecc.)
+- Se NON hai fonti specifiche, dillo chiaramente: "Non ho trovato documenti aggiornati"
 - Se trovi info contrastanti, dai priorità a API > WEB > DB
 - Se DB ha documenti vecchi (<2023) E hai risultati WEB recenti (>2023), usa SOLO WEB
 - Cita SEMPRE la data quando disponibile (es. "[WEB - UIF - 2025-03-15]")
 - Se chiedi di liste/sanzioni aggiornate, usa SOLO API e WEB, MAI DB
-- Se database è vuoto o irrilevante, CERCA SU WEB e dillo esplicitamente
-- Specifica quando hai cercato su internet per rispondere alla domanda` : 'Nessun documento trovato nel database. Ho cercato su internet per trovare informazioni aggiornate. Usa expertise generale AML/CFT.'}
+- Se database è vuoto o irrilevante E non hai risultati WEB, AMMETTI di non avere info aggiornate
+- Specifica quando hai cercato su internet per rispondere alla domanda` : `NESSUNA FONTE DISPONIBILE nel database o dal web.
+
+REGOLE CRITICHE:
+- NON inventare NESSUNA fonte (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, ecc.)
+- Ammetti onestamente: "Non ho trovato documenti aggiornati nel database e la ricerca web non ha prodotto risultati"
+- Puoi fornire informazioni GENERALI su AML/CFT ma specifica che sono da conoscenza generale, NON da fonti specifiche
+- Suggerisci di consultare direttamente i siti ufficiali: UIF, FATF, EBA
+- Se l'utente chiede "ultime notizie" o documenti recenti, AMMETTI se non riesci a trovarli`}
 
 Messaggio utente: "${message}"
 
-Rispondi in modo naturale e completo, senza virgolette. Cita le fonti con date quando usi informazioni specifiche.`
+Rispondi in modo naturale e completo, senza virgolette. Se citi fonti, devono essere SOLO quelle con tag [DB]/[WEB]/[API] che ti ho fornito.`
         : `You are Panda 🐼, an AML/CFT compliance expert.
 
 IMPORTANT: Always respond in natural English. NEVER in Italian.
@@ -349,17 +371,27 @@ SOURCE PRIORITY (most to least reliable):
 2. [WEB - source] = UPDATED information from official sites (2024-2026)
 3. [DB - source] = General documentation (might be outdated)
 
-RULES:
+FUNDAMENTAL RULES:
+- CITE ONLY sources provided with [DB], [WEB], [API] tags
+- NEVER make up sources (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, etc.)
+- If NO specific sources, state clearly: "I didn't find updated documents"
 - If conflicting info, prioritize API > WEB > DB
 - If DB has old docs (<2023) AND you have recent WEB results (>2023), use ONLY WEB
 - ALWAYS cite date when available (e.g., "[WEB - UIF - 2025-03-15]")
 - For updated lists/sanctions, use ONLY API and WEB, NEVER DB
-- If database is empty or irrelevant, SEARCH WEB and state it explicitly
-- Specify when you searched the internet to answer the question` : 'No documents found in database. I searched the internet for updated information. Use general AML/CFT expertise.'}
+- If database is empty or irrelevant AND no WEB results, ADMIT you don't have updated info
+- Specify when you searched the internet to answer the question` : `NO SOURCES AVAILABLE from database or web.
+
+CRITICAL RULES:
+- DO NOT make up ANY sources (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, etc.)
+- Admit honestly: "I didn't find updated documents in the database and web search returned no results"
+- You can provide GENERAL AML/CFT information but specify it's from general knowledge, NOT specific sources
+- Suggest consulting official sites directly: UIF, FATF, EBA
+- If user asks for "latest news" or recent documents, ADMIT if you can't find them`}
 
 User message: "${message}"
 
-Respond naturally and completely, without quotation marks. Cite sources with dates when using specific information.`;
+Respond naturally and completely, without quotation marks. If citing sources, they must ONLY be those with [DB]/[WEB]/[API] tags that I provided.`;
 
       const completion = await groq.chat.completions.create({
         messages: [
