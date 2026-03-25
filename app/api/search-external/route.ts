@@ -79,7 +79,23 @@ async function fallbackDuckDuckGo(query: string): Promise<SearchResult[]> {
   try {
     console.log(`🦆 Trying DuckDuckGo for: "${query}"`);
     
-    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query + ' antiriciclaggio OR AML OR compliance')}`;
+    // Migliora query basandoti sul contesto
+    let searchQuery = query;
+
+    if (/ultime|recenti|latest|recent|new|notizie/i.test(query)) {
+      // Se chiede ultime notizie, aggiungi constraint temporale e siti
+      searchQuery = `${query} 2025 2026 site:bancaditalia.it OR site:uif.bancaditalia.it OR site:fatf-gafi.org OR site:eba.europa.eu`;
+      console.log(`  📅 Time-based query detected`);
+    } else if (/aml|antiriciclaggio|riciclaggio|fatf|kyc|cdd/i.test(query)) {
+      // Query AML generica
+      searchQuery = `${query} compliance site:bancaditalia.it OR site:fatf-gafi.org OR site:eba.europa.eu`;
+      console.log(`  🏦 AML-specific query`);
+    } else {
+      // Fallback generico
+      searchQuery = `${query} AML compliance antiriciclaggio`;
+    }
+    
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
     
     const { data } = await axios.get(ddgUrl, {
       headers: {
@@ -125,14 +141,12 @@ export async function POST(request: NextRequest) {
 
     console.log(`\n🌐 Web search for: "${query}"`);
 
-    // Prova scraping diretto
     const scrapePromises = SOURCES.map(source => scrapeSite(source, query));
     const scrapeResults = await Promise.all(scrapePromises);
     const validScrapes = scrapeResults.filter((r): r is ScrapeResult => r !== null);
 
     console.log(`📊 Direct scrapes: ${validScrapes.length}/${SOURCES.length}`);
 
-    // Sempre prova DuckDuckGo come backup
     const ddgResults = await fallbackDuckDuckGo(query);
 
     const allResults: SearchResult[] = [
@@ -148,7 +162,6 @@ export async function POST(request: NextRequest) {
 
     console.log(`✅ Total results: ${allResults.length}`);
 
-    // Scrape content dalle prime 2 pagine
     const contentPromises = allResults.slice(0, 3).map(async (result): Promise<ContentResult> => {
       try {
         const { data } = await axios.get(result.url, {
@@ -199,5 +212,4 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// ✅ CAMBIA DA edge A nodejs
 export const runtime = 'nodejs';

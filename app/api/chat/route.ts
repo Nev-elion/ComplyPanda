@@ -30,7 +30,7 @@ function shouldSearchWeb(message: string): boolean {
     'oggi', 'ieri', 'yesterday', 'settimana', 'week', 'mese', 'month',
     '2024', '2025', '2026',
     'notizie', 'news', 'novità', 'update', 'aggiorna',
-    'dimostra', 'cerca', 'trova', 'search',
+    'dimostra', 'cerca', 'trova', 'search', 'veloce', 'controllare internet',
   ];
   
   const docTriggers = [
@@ -103,24 +103,20 @@ Return this exact structure:
 
 Rules:
 - "primary_intent": the MAIN intent of the message
-  * "greeting": ONLY if it's JUST a greeting with nothing else
-    Examples: "ciao", "hello", "hey panda"
-  * "how_are_you": ONLY if it's JUST asking wellbeing
-    Examples: "come stai?", "how are you?"
-  * "compliance_question": if there's ANY compliance question (even with greetings before)
-    Examples: "ciao, cos'è la fatf?", "hey, explain kyc", "come stai? poi vorrei sapere..."
-  * "off_topic": everything else
+  * "greeting": ONLY if it's a simple greeting AND user clearly doesn't want anything else
+    Examples: "ciao", "hello", "hey"
+  * "how_are_you": ONLY if JUST asking wellbeing
+  * "compliance_question": if there's ANY hint of wanting AML/compliance info
+    Examples: "ciao panda" (in compliance context), "ultime notizie", "veloce", "controlla internet"
+    Even vague requests like "fammi vedere" or "dimostra" count as compliance_question
+  * "off_topic": only completely unrelated topics
 
-- "has_compliance_question": true if the message contains ANY compliance question, regardless of greetings
-  Check for keywords: AML, CFT, KYC, CDD, FATF, regulations, normativa, antiriciclaggio, etc.
+- "has_compliance_question": true if ANY indication user wants compliance info
+  Keywords: AML, CFT, KYC, notizie, ultime, veloce, dimostra, controlla, cerca, internet
 
-- "language": 
-  * "it" if Italian words detected
-  * "en" otherwise
-
-IMPORTANT: If message contains both greeting AND compliance question, set:
-- primary_intent: "compliance_question"
-- has_compliance_question: true
+- If greeting seems conversational but in compliance context, set:
+  primary_intent: "compliance_question"
+  has_compliance_question: true
 
 Return ONLY the JSON.`;
 
@@ -154,6 +150,79 @@ Return ONLY the JSON.`;
       confidence: 0.5 
     };
   }
+}
+
+// ========================================
+// EXTRACT SOURCES & BUILD CITATIONS
+// ========================================
+
+interface Citation {
+  id: number;
+  source: string;
+  title: string;
+  date?: string;
+  url?: string;
+}
+
+function extractCitations(contextText: string, webContent: any[], apiContent: any[]): Citation[] {
+  const citations: Citation[] = [];
+  let citationId = 1;
+
+  // Extract WEB sources
+  if (webContent && webContent.length > 0) {
+    webContent.forEach(item => {
+      citations.push({
+        id: citationId++,
+        source: item.source || 'Web',
+        title: item.title || 'Documento web',
+        url: item.url,
+      });
+    });
+  }
+
+  // Extract API sources
+  if (apiContent && apiContent.length > 0) {
+    apiContent.forEach(item => {
+      citations.push({
+        id: citationId++,
+        source: item.source || 'API',
+        title: typeof item.data === 'string' ? item.data.substring(0, 80) : 'API Result',
+        url: item.url,
+      });
+    });
+  }
+
+  // Extract DB sources from context text
+  const dbMatches = contextText.match(/\[DB - ([^\]]+?)(?: - (\d{4}-\d{2}-\d{2}))?\]/g);
+  if (dbMatches) {
+    const uniqueDB = new Set();
+    dbMatches.forEach(match => {
+      const parsed = match.match(/\[DB - ([^\]]+?)(?: - (\d{4}-\d{2}-\d{2}))?\]/);
+      if (parsed && !uniqueDB.has(parsed[1])) {
+        uniqueDB.add(parsed[1]);
+        citations.push({
+          id: citationId++,
+          source: parsed[1],
+          title: 'Database interno',
+          date: parsed[2],
+        });
+      }
+    });
+  }
+
+  return citations;
+}
+
+function buildCitationsFooter(citations: Citation[], lang: 'it' | 'en'): string {
+  if (citations.length === 0) return '';
+
+  const header = lang === 'it' ? '\n\n---\n\n**Fonti:**\n' : '\n\n---\n\n**Sources:**\n';
+  
+  return header + citations.map(c => {
+    const dateStr = c.date ? ` (${c.date})` : '';
+    const urlStr = c.url ? ` - [Link](${c.url})` : '';
+    return `\n**[${c.id}]** ${c.source}${dateStr}: ${c.title}${urlStr}`;
+  }).join('');
 }
 
 // ========================================
@@ -204,6 +273,7 @@ export async function POST(request: NextRequest) {
       // 2. SEARCH WEB (prioritize if DB insufficient)
       // ========================================
       let webContext = '';
+      let webContentArray: any[] = [];
       const needsWebSearch = shouldSearchWeb(message) || shouldPrioritizeWeb;
 
       console.log(`🔍 Web search decision: ${needsWebSearch ? 'YES' : 'NO'}`);
@@ -222,8 +292,9 @@ export async function POST(request: NextRequest) {
             const webData = await webResponse.json();
             
             if (webData.content && webData.content.length > 0) {
+              webContentArray = webData.content;
               webContext = webData.content
-                .map((item: any) => `[WEB - ${item.source}] ${item.title}\n${item.content}`)
+                .map((item: any, idx: number) => `[WEB-${idx + 1}] ${item.source}: ${item.title}\n${item.content}`)
                 .join('\n\n---\n\n');
               console.log(`✅ Found ${webData.content.length} web results`);
             } else {
@@ -241,6 +312,7 @@ export async function POST(request: NextRequest) {
       // 3. QUERY EXTERNAL APIs (if needed)
       // ========================================
       let apiContext = '';
+      let apiContentArray: any[] = [];
       if (shouldQueryAPIs(message)) {
         try {
           console.log('🔍 Querying external APIs...');
@@ -261,12 +333,13 @@ export async function POST(request: NextRequest) {
             const apiData = await apiResponse.json();
             
             if (apiData.results && apiData.results.length > 0) {
+              apiContentArray = apiData.results;
               apiContext = apiData.results
-                .map((item: any) => {
+                .map((item: any, idx: number) => {
                   const dataStr = typeof item.data === 'object' 
                     ? JSON.stringify(item.data, null, 2).substring(0, 1000)
                     : String(item.data).substring(0, 1000);
-                  return `[API - ${item.source}]\n${dataStr}`;
+                  return `[API-${idx + 1}] ${item.source}\n${dataStr}`;
                 })
                 .join('\n\n---\n\n');
               console.log(`✅ Found ${apiData.results.length} API results`);
@@ -281,12 +354,15 @@ export async function POST(request: NextRequest) {
       // 4. COMBINE ALL CONTEXTS
       // ========================================
       const dbContext = context && context.length > 0
-        ? context.map(item => `[DB - ${item.source}${item.date ? ` - ${item.date}` : ''}] ${item.title}:\n${item.content}`).join('\n\n---\n\n')
+        ? context.map((item, idx) => `[DB-${idx + 1}] ${item.source}${item.date ? ` - ${item.date}` : ''}: ${item.title}\n${item.content}`).join('\n\n---\n\n')
         : '';
 
       const allContexts = [dbContext, webContext, apiContext].filter(Boolean);
       const hasContext = allContexts.length > 0;
       const contextText = allContexts.join('\n\n━━━━━━ ADDITIONAL SOURCES ━━━━━━\n\n');
+
+      // Build citations
+      const citations = extractCitations(contextText, webContentArray, apiContentArray);
 
       // ========================================
       // 5. GENERATE AI RESPONSE
@@ -296,102 +372,106 @@ export async function POST(request: NextRequest) {
 
 IMPORTANTE: Rispondi SEMPRE in italiano naturale. MAI in inglese.
 
-NON iniziare MAI con "Ciao! Tutto bene grazie" a meno che l'utente non abbia esplicitamente chiesto come stai.
-Vai DIRETTAMENTE alla risposta della domanda.
+NON iniziare MAI con saluti a meno che l'utente non chieda esplicitamente come stai.
+Vai DIRETTAMENTE alla risposta.
 
 STILE:
 - Naturale, mai robotico
 - Diretto e utile
 - Usa esempi quando aiutano
-- NO frasi template tipo "Pronto ad aiutarti"
+- NO frasi template
 - NON usare MAI virgolette (" ") all'inizio o fine della risposta
-- Scrivi come se stessi parlando naturalmente con un collega
 
 STRUTTURA:
 1. Vai DIRETTAMENTE alla risposta
 2. Dettagli chiave (3-5 punti con •)
 3. Esempio pratico se utile
-4. Fonti: cita esplicitamente [DB - fonte], [WEB - fonte], [API - fonte] con DATE quando disponibili
+4. CITAZIONI - Usa numeri tra parentesi: (1), (2), (3)
+   Esempio: "La roadmap Appia è stata presentata il 20 marzo (1)"
+   NON scrivere [WEB - fonte] inline
+   Le fonti complete verranno aggiunte automaticamente alla fine
 
 ${hasContext ? `FONTI DISPONIBILI:
 ${contextText}
 
-PRIORITÀ FONTI (dal più al meno affidabile):
-1. [API - fonte] = Dati REAL-TIME, massima priorità (es. sanctions, companies)
-2. [WEB - fonte] = Informazioni AGGIORNATE da siti ufficiali (2024-2026)
-3. [DB - fonte] = Documentazione generale (potrebbe essere datata)
+PRIORITÀ FONTI:
+1. [API-X] = REAL-TIME (massima priorità)
+2. [WEB-X] = Aggiornate 2024-2026
+3. [DB-X] = Documentazione generale
 
-REGOLE FONDAMENTALI:
-- CITA SOLO fonti che ti ho fornito con tag [DB], [WEB], [API]
-- NON inventare MAI fonti (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, ecc.)
-- Se NON hai fonti specifiche, dillo chiaramente: "Non ho trovato documenti aggiornati"
-- Se trovi info contrastanti, dai priorità a API > WEB > DB
-- Se DB ha documenti vecchi (<2023) E hai risultati WEB recenti (>2023), usa SOLO WEB
-- Cita SEMPRE la data quando disponibile (es. "[WEB - UIF - 2025-03-15]")
-- Se chiedi di liste/sanzioni aggiornate, usa SOLO API e WEB, MAI DB
-- Se database è vuoto o irrilevante E non hai risultati WEB, AMMETTI di non avere info aggiornate
-- Specifica quando hai cercato su internet per rispondere alla domanda` : `NESSUNA FONTE DISPONIBILE nel database o dal web.
+DIVERSITÀ FONTI:
+- Usa fonti DIVERSE quando disponibili
+- Non concentrarti solo su una fonte (es. solo Banca Italia)
+- FATF/EBA per normativa internazionale
+- Banca Italia/UIF per Italia
 
-REGOLE CRITICHE:
-- NON inventare NESSUNA fonte (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, ecc.)
-- Ammetti onestamente: "Non ho trovato documenti aggiornati nel database e la ricerca web non ha prodotto risultati"
-- Puoi fornire informazioni GENERALI su AML/CFT ma specifica che sono da conoscenza generale, NON da fonti specifiche
-- Suggerisci di consultare direttamente i siti ufficiali: UIF, FATF, EBA
-- Se l'utente chiede "ultime notizie" o documenti recenti, AMMETTI se non riesci a trovarli`}
+REGOLE CITAZIONI:
+- Usa (1), (2), (3) per citare
+- Esempio: "La FATF ha pubblicato linee guida (1)"
+- NON scrivere [WEB - ...] nel testo
+- Cita fonte quando usi informazione specifica` : `NESSUNA FONTE disponibile.
+
+REGOLE:
+- NON inventare fonti
+- Ammetti: "Non ho trovato documenti aggiornati"
+- Puoi dare info generali ma specifica che sono da conoscenza generale
+- Suggerisci consultare siti ufficiali: UIF, FATF, EBA`}
 
 Messaggio utente: "${message}"
 
-Rispondi in modo naturale e completo, senza virgolette. Se citi fonti, devono essere SOLO quelle con tag [DB]/[WEB]/[API] che ti ho fornito.`
+Rispondi naturalmente senza virgolette. Usa (1), (2) per citazioni.`
         : `You are Panda 🐼, an AML/CFT compliance expert.
 
-IMPORTANT: Always respond in natural English. NEVER in Italian.
+IMPORTANT: Always respond in natural English.
 
-NEVER start with "Hey! I'm great, thanks" unless user explicitly asked how you are.
-Go DIRECTLY to answering the question.
+NEVER start with greetings unless user explicitly asks how you are.
+Go DIRECTLY to the answer.
 
 STYLE:
 - Natural, never robotic
 - Direct and useful
 - Use examples when helpful
-- NO template phrases like "Ready to help"
-- NEVER use quotation marks (" ") at the start or end of your response
-- Write as if you're naturally talking to a colleague
+- NO template phrases
+- NEVER use quotation marks (" ") at start or end
 
 STRUCTURE:
 1. Go DIRECTLY to the answer
 2. Key details (3-5 points with •)
 3. Practical example if useful
-4. Sources: explicitly cite [DB - source], [WEB - source], [API - source] with DATES when available
+4. CITATIONS - Use numbers in parentheses: (1), (2), (3)
+   Example: "FATF published new guidelines (1)"
+   Do NOT write [WEB - source] inline
+   Full sources will be added automatically at the end
 
 ${hasContext ? `AVAILABLE SOURCES:
 ${contextText}
 
-SOURCE PRIORITY (most to least reliable):
-1. [API - source] = REAL-TIME data, highest priority (e.g., sanctions, companies)
-2. [WEB - source] = UPDATED information from official sites (2024-2026)
-3. [DB - source] = General documentation (might be outdated)
+SOURCE PRIORITY:
+1. [API-X] = REAL-TIME (highest priority)
+2. [WEB-X] = Updated 2024-2026
+3. [DB-X] = General documentation
 
-FUNDAMENTAL RULES:
-- CITE ONLY sources provided with [DB], [WEB], [API] tags
-- NEVER make up sources (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, etc.)
-- If NO specific sources, state clearly: "I didn't find updated documents"
-- If conflicting info, prioritize API > WEB > DB
-- If DB has old docs (<2023) AND you have recent WEB results (>2023), use ONLY WEB
-- ALWAYS cite date when available (e.g., "[WEB - UIF - 2025-03-15]")
-- For updated lists/sanctions, use ONLY API and WEB, NEVER DB
-- If database is empty or irrelevant AND no WEB results, ADMIT you don't have updated info
-- Specify when you searched the internet to answer the question` : `NO SOURCES AVAILABLE from database or web.
+SOURCE DIVERSITY:
+- Use DIFFERENT sources when available
+- Don't focus only on one source (e.g., only Banca Italia)
+- FATF/EBA for international regulation
+- Banca Italia/UIF for Italy
 
-CRITICAL RULES:
-- DO NOT make up ANY sources (Il Sole 24 Ore, Reuters, Bloomberg, UNODC, etc.)
-- Admit honestly: "I didn't find updated documents in the database and web search returned no results"
-- You can provide GENERAL AML/CFT information but specify it's from general knowledge, NOT specific sources
-- Suggest consulting official sites directly: UIF, FATF, EBA
-- If user asks for "latest news" or recent documents, ADMIT if you can't find them`}
+CITATION RULES:
+- Use (1), (2), (3) to cite
+- Example: "FATF published guidelines (1)"
+- Do NOT write [WEB - ...] in text
+- Cite source when using specific information` : `NO SOURCES available.
+
+RULES:
+- Do NOT make up sources
+- Admit: "I didn't find updated documents"
+- Can provide general info but specify it's from general knowledge
+- Suggest consulting official sites: UIF, FATF, EBA`}
 
 User message: "${message}"
 
-Respond naturally and completely, without quotation marks. If citing sources, they must ONLY be those with [DB]/[WEB]/[API] tags that I provided.`;
+Respond naturally without quotes. Use (1), (2) for citations.`;
 
       const completion = await groq.chat.completions.create({
         messages: [
@@ -406,12 +486,18 @@ Respond naturally and completely, without quotation marks. If citing sources, th
       let response = completion.choices[0]?.message?.content || 
         (lang === 'it' ? 'Errore. Riprova.' : 'Error. Try again.');
 
+      // Clean quotes
       response = response.replace(/^["']|["']$/g, '');
       if (response.startsWith('"') && response.endsWith('"')) {
         response = response.slice(1, -1);
       }
       if (response.startsWith("'") && response.endsWith("'")) {
         response = response.slice(1, -1);
+      }
+
+      // Add citations footer
+      if (citations.length > 0) {
+        response += buildCitationsFooter(citations, lang);
       }
 
       responseCache.set(cacheKey, { response, timestamp: Date.now() });
@@ -435,23 +521,21 @@ Respond naturally and completely, without quotation marks. If citing sources, th
 "${message}"
 
 IMPORTANTE: 
-- NON usare virgolette (" ") nella risposta
-- Scrivi il testo direttamente senza quotation marks
-- Rispondi in italiano con personalità friendly
-- Invita l'utente a fare domande su AML/CFT
+- NON usare virgolette (" ")
+- Rispondi in italiano friendly
+- Invita a domande su AML/CFT
 
-Scrivi la risposta senza virgolette.`
+Senza virgolette.`
       : `You are Panda 🐼, respond to this greeting naturally and briefly (max 2 lines):
 
 "${message}"
 
 IMPORTANT:
-- Do NOT use quotation marks (" ") in your response
-- Write text directly without quotes
+- Do NOT use quotation marks (" ")
 - Respond in English with friendly personality
-- Invite user to ask about AML/CFT
+- Invite to ask about AML/CFT
 
-Write response without quotation marks.`;
+Without quotation marks.`;
 
     const simpleCompletion = await groq.chat.completions.create({
       messages: [{ role: 'user', content: simpleResponsePrompt }],
@@ -485,4 +569,4 @@ Write response without quotation marks.`;
   }
 }
 
-export const runtime = 'edge';
+export const runtime = 'nodejs';
