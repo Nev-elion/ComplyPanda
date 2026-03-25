@@ -80,6 +80,52 @@ function extractEntityName(message: string): string {
 }
 
 // ========================================
+// KEYWORD EXTRACTION
+// ========================================
+
+function extractKeywords(message: string): string[] {
+  const keywords: string[] = [];
+  const messageLower = message.toLowerCase();
+  
+  const specificTerms = [
+    'indicatori anomalia', 'indicatori di anomalia', 'segnali di allerta',
+    'istituto pagamento', 'istituti di pagamento', 'payment institution',
+    'adeguata verifica', 'customer due diligence', 'cdd',
+    'enhanced due diligence', 'edd', 'verifica rafforzata',
+    'pep', 'persone politicamente esposte',
+    'segnalazione operazioni sospette', 'sos', 'str',
+    'travel rule', 'wire transfer', 'bonifico',
+    'virtual assets', 'vasp', 'crypto', 'criptovalute',
+    'titolare effettivo', 'beneficial owner',
+    'paesi ad alto rischio', 'high risk countries',
+    'grey list', 'blacklist', 'lista grigia',
+    'fatf recommendation', 'raccomandazione fatf',
+    'direttiva', 'regolamento', 'circolare',
+    'provvedimento', 'comunicazione uif',
+    'art.', 'articolo', 'd.lgs', 'decreto',
+  ];
+  
+  specificTerms.forEach(term => {
+    if (messageLower.includes(term)) {
+      keywords.push(term);
+    }
+  });
+  
+  const entities = [
+    'uif', 'fatf', 'gafi', 'eba', 'esma', 'consob',
+    'kyc', 'aml', 'cft', 'ml/tf', 'mlro',
+  ];
+  
+  entities.forEach(entity => {
+    if (messageLower.includes(entity)) {
+      keywords.push(entity);
+    }
+  });
+  
+  return [...new Set(keywords)];
+}
+
+// ========================================
 // AI INTENT CLASSIFICATION
 // ========================================
 
@@ -102,23 +148,21 @@ Return this exact structure:
 }
 
 Rules:
-- "primary_intent": the MAIN intent of the message
-  * "greeting": ONLY if it's a simple greeting AND user clearly doesn't want anything else
-    Examples: "ciao", "hello", "hey"
-  * "how_are_you": ONLY if JUST asking wellbeing
-  * "compliance_question": if there's ANY hint of wanting AML/compliance info
-    Examples: "ciao panda" (in compliance context), "ultime notizie", "veloce", "controlla internet"
-    Even vague requests like "fammi vedere" or "dimostra" count as compliance_question
-  * "off_topic": only completely unrelated topics
+- "primary_intent": the MAIN intent
+  * "greeting": ONLY simple greeting without context
+  * "how_are_you": ONLY asking wellbeing
+  * "compliance_question": ANY hint of wanting AML/compliance info
+    Even vague requests like "fammi vedere", "dimostra", "controlla internet"
+  * "off_topic": unrelated topics
 
 - "has_compliance_question": true if ANY indication user wants compliance info
-  Keywords: AML, CFT, KYC, notizie, ultime, veloce, dimostra, controlla, cerca, internet
+  Keywords: AML, CFT, KYC, notizie, ultime, veloce, dimostra, controlla, cerca
 
-- If greeting seems conversational but in compliance context, set:
+- If greeting in compliance context, set:
   primary_intent: "compliance_question"
   has_compliance_question: true
 
-Return ONLY the JSON.`;
+Return ONLY JSON.`;
 
   try {
     const completion = await groq.chat.completions.create({
@@ -168,9 +212,8 @@ function extractCitations(contextText: string, webContent: any[], apiContent: an
   const citations: Citation[] = [];
   let citationId = 1;
 
-  // Extract WEB sources
   if (webContent && webContent.length > 0) {
-    webContent.forEach(item => {
+    webContent.forEach((item: any) => {
       citations.push({
         id: citationId++,
         source: item.source || 'Web',
@@ -180,9 +223,8 @@ function extractCitations(contextText: string, webContent: any[], apiContent: an
     });
   }
 
-  // Extract API sources
   if (apiContent && apiContent.length > 0) {
-    apiContent.forEach(item => {
+    apiContent.forEach((item: any) => {
       citations.push({
         id: citationId++,
         source: item.source || 'API',
@@ -192,10 +234,9 @@ function extractCitations(contextText: string, webContent: any[], apiContent: an
     });
   }
 
-  // Extract DB sources from context text
   const dbMatches = contextText.match(/\[DB - ([^\]]+?)(?: - (\d{4}-\d{2}-\d{2}))?\]/g);
   if (dbMatches) {
-    const uniqueDB = new Set();
+    const uniqueDB = new Set<string>();
     dbMatches.forEach(match => {
       const parsed = match.match(/\[DB - ([^\]]+?)(?: - (\d{4}-\d{2}-\d{2}))?\]/);
       if (parsed && !uniqueDB.has(parsed[1])) {
@@ -247,65 +288,88 @@ export async function POST(request: NextRequest) {
       }
 
       // ========================================
-      // 1. SEARCH DATABASE
+      // 1. SEARCH DATABASE - IMPROVED
       // ========================================
-      let { data: context } = await supabase
-        .from('aml_knowledge')
-        .select('content, source, title, date')
-        .textSearch('content', message)
-        .order('date', { ascending: false })
-        .limit(8);
+      let context: any[] = [];
+      const keywords = extractKeywords(message);
+      
+      console.log(`🔑 Keywords: ${keywords.length > 0 ? keywords.join(', ') : 'none'}`);
 
-      const shouldPrioritizeWeb = !context || 
-        context.length < 3 || 
-        (context.every(c => !c.date || new Date(c.date) < new Date('2023-01-01')));
-
-      console.log(`📊 Database results: ${context?.length || 0}`);
-      console.log(`🌐 Should search web: ${shouldSearchWeb(message)}`);
-      console.log(`⚡ Should prioritize web: ${shouldPrioritizeWeb}`);
-
-      if (!context || context.length === 0) {
-        console.log('⚠️  No database results, will rely on web search');
-        context = [];
+      if (keywords.length > 0) {
+        const orConditions = keywords.map(k => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
+        
+        const { data: exactMatches } = await supabase
+          .from('aml_knowledge')
+          .select('content, source, title, date, category')
+          .or(orConditions)
+          .order('date', { ascending: false })
+          .limit(5);
+        
+        if (exactMatches) {
+          context.push(...exactMatches);
+          console.log(`  ✅ Exact matches: ${exactMatches.length}`);
+        }
       }
 
+      const { data: fullTextResults } = await supabase
+        .from('aml_knowledge')
+        .select('content, source, title, date, category')
+        .textSearch('content', message)
+        .order('date', { ascending: false })
+        .limit(5);
+
+      if (fullTextResults) {
+        fullTextResults.forEach((result: any) => {
+          if (!context.find((c: any) => c.title === result.title)) {
+            context.push(result);
+          }
+        });
+        console.log(`  ✅ Full-text results: ${fullTextResults.length}`);
+      }
+
+      context = context.slice(0, 8);
+
+      const shouldPrioritizeWeb = !context || 
+        context.length < 2 || 
+        (context.every((c: any) => !c.date || new Date(c.date) < new Date('2023-01-01')));
+
+      console.log(`📊 Total DB results: ${context?.length || 0}`);
+      console.log(`⚡ Should prioritize web: ${shouldPrioritizeWeb}`);
+
       // ========================================
-      // 2. SEARCH WEB (prioritize if DB insufficient)
+      // 2. SEARCH WEB - SEMPRE ATTIVO
       // ========================================
       let webContext = '';
       let webContentArray: any[] = [];
-      const needsWebSearch = shouldSearchWeb(message) || shouldPrioritizeWeb;
 
-      console.log(`🔍 Web search decision: ${needsWebSearch ? 'YES' : 'NO'}`);
+      console.log(`🔍 Web search: ALWAYS ON for compliance questions`);
 
-      if (needsWebSearch) {
-        try {
-          console.log('🌐 Triggering web search (priority)...');
-          const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://comply-panda.vercel.app';
-          const webResponse = await fetch(`${baseUrl}/api/search-external`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ query: message }),
-          });
+      try {
+        console.log('🌐 Triggering web search...');
+        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://comply-panda.vercel.app';
+        const webResponse = await fetch(`${baseUrl}/api/search-external`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: message }),
+        });
+        
+        if (webResponse.ok) {
+          const webData = await webResponse.json();
           
-          if (webResponse.ok) {
-            const webData = await webResponse.json();
-            
-            if (webData.content && webData.content.length > 0) {
-              webContentArray = webData.content;
-              webContext = webData.content
-                .map((item: any, idx: number) => `[WEB-${idx + 1}] ${item.source}: ${item.title}\n${item.content}`)
-                .join('\n\n---\n\n');
-              console.log(`✅ Found ${webData.content.length} web results`);
-            } else {
-              console.log('⚠️  Web search returned no results');
-            }
+          if (webData.content && webData.content.length > 0) {
+            webContentArray = webData.content;
+            webContext = webData.content
+              .map((item: any, idx: number) => `[WEB-${idx + 1}] ${item.source}: ${item.title}\n${item.content}`)
+              .join('\n\n---\n\n');
+            console.log(`✅ Found ${webData.content.length} web results`);
           } else {
-            console.error(`❌ Web search failed: ${webResponse.status}`);
+            console.log('⚠️  Web search returned no results');
           }
-        } catch (error: any) {
-          console.error('❌ Web search error:', error.message);
+        } else {
+          console.error(`❌ Web search failed: ${webResponse.status}`);
         }
+      } catch (error: any) {
+        console.error('❌ Web search error:', error.message);
       }
 
       // ========================================
@@ -354,124 +418,146 @@ export async function POST(request: NextRequest) {
       // 4. COMBINE ALL CONTEXTS
       // ========================================
       const dbContext = context && context.length > 0
-        ? context.map((item, idx) => `[DB-${idx + 1}] ${item.source}${item.date ? ` - ${item.date}` : ''}: ${item.title}\n${item.content}`).join('\n\n---\n\n')
+        ? context.map((item: any, idx: number) => {
+            let relevantContent: string = item.content;
+            
+            if (keywords.length > 0) {
+              const paragraphs: string[] = item.content.split('\n\n');
+              const relevantParagraphs: string[] = paragraphs.filter((p: string) => 
+                keywords.some((k: string) => p.toLowerCase().includes(k.toLowerCase()))
+              );
+              
+              if (relevantParagraphs.length > 0) {
+                relevantContent = relevantParagraphs.join('\n\n').substring(0, 1500);
+              } else {
+                relevantContent = item.content.substring(0, 1500);
+              }
+            } else {
+              relevantContent = item.content.substring(0, 1500);
+            }
+            
+            return `[DB-${idx + 1}] ${item.source}${item.date ? ` - ${item.date}` : ''}: ${item.title}\n${relevantContent}`;
+          }).join('\n\n---\n\n')
         : '';
 
       const allContexts = [dbContext, webContext, apiContext].filter(Boolean);
       const hasContext = allContexts.length > 0;
       const contextText = allContexts.join('\n\n━━━━━━ ADDITIONAL SOURCES ━━━━━━\n\n');
 
-      // Build citations
       const citations = extractCitations(contextText, webContentArray, apiContentArray);
 
       // ========================================
       // 5. GENERATE AI RESPONSE
       // ========================================
       const systemPrompt = lang === 'it'
-        ? `Sei Panda 🐼, un esperto italiano di compliance AML/CFT.
+        ? `Sei Panda 🐼, esperto compliance AML/CFT italiano.
 
-IMPORTANTE: Rispondi SEMPRE in italiano naturale. MAI in inglese.
+STILE: Diretto, preciso, professionale. NO saluti automatici.
 
-NON iniziare MAI con saluti a meno che l'utente non chieda esplicitamente come stai.
-Vai DIRETTAMENTE alla risposta.
+STRUTTURA RISPOSTA:
 
-STILE:
-- Naturale, mai robotico
-- Diretto e utile
-- Usa esempi quando aiutano
-- NO frasi template
-- NON usare MAI virgolette (" ") all'inizio o fine della risposta
+DOMANDA SPECIFICA (es. "indicatori anomalia istituti pagamento"):
+1. Vai DIRETTO ai dati ESATTI dai documenti
+2. Lista PRECISA (numerata)
+3. Cita fonte per ogni punto: (1), (2), (3)
+4. MAX 150 parole
+5. NO esempi generici se hai dati concreti
 
-STRUTTURA:
-1. Vai DIRETTAMENTE alla risposta
-2. Dettagli chiave (3-5 punti con •)
-3. Esempio pratico se utile
-4. CITAZIONI - Usa numeri tra parentesi: (1), (2), (3)
-   Esempio: "La roadmap Appia è stata presentata il 20 marzo (1)"
-   NON scrivere [WEB - fonte] inline
-   Le fonti complete verranno aggiunte automaticamente alla fine
+DOMANDA GENERICA (es. "cos'è AML"):
+1. Definizione breve (2-3 righe)
+2. 3-5 punti chiave con •
+3. Esempio SE utile
+4. MAX 250 parole
 
-${hasContext ? `FONTI DISPONIBILI:
+CASI SPECIALI:
+
+INDICATORI ANOMALIA:
+✅ CORRETTO: Estrai lista ESATTA da documento
+"Secondo UIF (1):
+1. Frazionamento sotto €15.000
+2. Uso ripetuto contanti
+3. Transazioni paesi non cooperativi"
+
+❌ SBAGLIATO: "Transazioni sospette, comportamenti insoliti..."
+
+NORMATIVA: Cita ESATTAMENTE testo, specifica art./comma
+
+CITAZIONI: (1), (2), (3) nel testo. Fonti in fondo automatiche.
+
+${hasContext ? `FONTI:
 ${contextText}
 
-PRIORITÀ FONTI:
-1. [API-X] = REAL-TIME (massima priorità)
-2. [WEB-X] = Aggiornate 2024-2026
-3. [DB-X] = Documentazione generale
-
-DIVERSITÀ FONTI:
-- Usa fonti DIVERSE quando disponibili
-- Non concentrarti solo su una fonte (es. solo Banca Italia)
-- FATF/EBA per normativa internazionale
-- Banca Italia/UIF per Italia
-
-REGOLE CITAZIONI:
-- Usa (1), (2), (3) per citare
-- Esempio: "La FATF ha pubblicato linee guida (1)"
-- NON scrivere [WEB - ...] nel testo
-- Cita fonte quando usi informazione specifica` : `NESSUNA FONTE disponibile.
+PRIORITÀ:
+1. API = real-time
+2. WEB = aggiornate (PREFERISCI SE DISPONIBILI)
+3. DB = base documentale
 
 REGOLE:
-- NON inventare fonti
-- Ammetti: "Non ho trovato documenti aggiornati"
-- Puoi dare info generali ma specifica che sono da conoscenza generale
-- Suggerisci consultare siti ufficiali: UIF, FATF, EBA`}
+- Se WEB ha risposta specifica → USA QUELLA
+- Estrai DATI SPECIFICI quando disponibili
+- Diversifica fonti (FATF + EBA + UIF)
+- Se DB vecchio + WEB recente → USA WEB` : `NESSUNA FONTE.
+- NON inventare
+- Ammetti: "Non ho documenti specifici"
+- Suggerisci fonti ufficiali`}
 
-Messaggio utente: "${message}"
+Messaggio: "${message}"
 
-Rispondi naturalmente senza virgolette. Usa (1), (2) per citazioni.`
-        : `You are Panda 🐼, an AML/CFT compliance expert.
+Rispondi PRECISO e CONCISO. Usa (1), (2) per citare.`
+        : `You are Panda 🐼, AML/CFT compliance expert.
 
-IMPORTANT: Always respond in natural English.
+STYLE: Direct, precise, professional. NO auto-greetings.
 
-NEVER start with greetings unless user explicitly asks how you are.
-Go DIRECTLY to the answer.
+ANSWER STRUCTURE:
 
-STYLE:
-- Natural, never robotic
-- Direct and useful
-- Use examples when helpful
-- NO template phrases
-- NEVER use quotation marks (" ") at start or end
+SPECIFIC QUESTION (e.g., "anomaly indicators payment institutions"):
+1. Go DIRECT to EXACT data from documents
+2. PRECISE list (numbered)
+3. Cite source for each point: (1), (2), (3)
+4. MAX 150 words
+5. NO generic examples if you have concrete data
 
-STRUCTURE:
-1. Go DIRECTLY to the answer
-2. Key details (3-5 points with •)
-3. Practical example if useful
-4. CITATIONS - Use numbers in parentheses: (1), (2), (3)
-   Example: "FATF published new guidelines (1)"
-   Do NOT write [WEB - source] inline
-   Full sources will be added automatically at the end
+GENERIC QUESTION (e.g., "what is AML"):
+1. Brief definition (2-3 lines)
+2. 3-5 key points with •
+3. Example IF useful
+4. MAX 250 words
 
-${hasContext ? `AVAILABLE SOURCES:
+SPECIAL CASES:
+
+ANOMALY INDICATORS:
+✅ CORRECT: Extract EXACT list from document
+"Per UIF (1):
+1. Structuring below €15,000
+2. Repeated cash use
+3. Transactions to non-cooperative countries"
+
+❌ WRONG: "Suspicious transactions, unusual behavior..."
+
+LEGISLATION: Cite EXACTLY, specify art./section
+
+CITATIONS: (1), (2), (3) in text. Full sources auto-added.
+
+${hasContext ? `SOURCES:
 ${contextText}
 
-SOURCE PRIORITY:
-1. [API-X] = REAL-TIME (highest priority)
-2. [WEB-X] = Updated 2024-2026
-3. [DB-X] = General documentation
-
-SOURCE DIVERSITY:
-- Use DIFFERENT sources when available
-- Don't focus only on one source (e.g., only Banca Italia)
-- FATF/EBA for international regulation
-- Banca Italia/UIF for Italy
-
-CITATION RULES:
-- Use (1), (2), (3) to cite
-- Example: "FATF published guidelines (1)"
-- Do NOT write [WEB - ...] in text
-- Cite source when using specific information` : `NO SOURCES available.
+PRIORITY:
+1. API = real-time
+2. WEB = updated (PREFER IF AVAILABLE)
+3. DB = documentation base
 
 RULES:
-- Do NOT make up sources
-- Admit: "I didn't find updated documents"
-- Can provide general info but specify it's from general knowledge
-- Suggest consulting official sites: UIF, FATF, EBA`}
+- If WEB has specific answer → USE THAT
+- Extract SPECIFIC DATA when available
+- Diversify sources (FATF + EBA + UIF)
+- If old DB + recent WEB → USE WEB` : `NO SOURCES.
+- Don't invent
+- Admit: "I don't have specific documents"
+- Suggest official sources`}
 
-User message: "${message}"
+Message: "${message}"
 
-Respond naturally without quotes. Use (1), (2) for citations.`;
+Respond PRECISELY and CONCISELY. Use (1), (2) to cite.`;
 
       const completion = await groq.chat.completions.create({
         messages: [
@@ -486,7 +572,6 @@ Respond naturally without quotes. Use (1), (2) for citations.`;
       let response = completion.choices[0]?.message?.content || 
         (lang === 'it' ? 'Errore. Riprova.' : 'Error. Try again.');
 
-      // Clean quotes
       response = response.replace(/^["']|["']$/g, '');
       if (response.startsWith('"') && response.endsWith('"')) {
         response = response.slice(1, -1);
@@ -495,7 +580,6 @@ Respond naturally without quotes. Use (1), (2) for citations.`;
         response = response.slice(1, -1);
       }
 
-      // Add citations footer
       if (citations.length > 0) {
         response += buildCitationsFooter(citations, lang);
       }
@@ -516,26 +600,12 @@ Respond naturally without quotes. Use (1), (2) for citations.`;
     // HANDLE SIMPLE GREETINGS
     // ========================================
     const simpleResponsePrompt = lang === 'it'
-      ? `Sei Panda 🐼, rispondi a questo saluto in modo naturale e breve (max 2 righe):
-
+      ? `Sei Panda 🐼, rispondi brevemente (max 2 righe):
 "${message}"
-
-IMPORTANTE: 
-- NON usare virgolette (" ")
-- Rispondi in italiano friendly
-- Invita a domande su AML/CFT
-
-Senza virgolette.`
-      : `You are Panda 🐼, respond to this greeting naturally and briefly (max 2 lines):
-
+NO virgolette. Italiano friendly. Invita a domande AML/CFT.`
+      : `You are Panda 🐼, respond briefly (max 2 lines):
 "${message}"
-
-IMPORTANT:
-- Do NOT use quotation marks (" ")
-- Respond in English with friendly personality
-- Invite to ask about AML/CFT
-
-Without quotation marks.`;
+NO quotes. English friendly. Invite AML/CFT questions.`;
 
     const simpleCompletion = await groq.chat.completions.create({
       messages: [{ role: 'user', content: simpleResponsePrompt }],
