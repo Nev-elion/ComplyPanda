@@ -19,110 +19,17 @@ function getCacheKey(message: string): string {
 }
 
 // ========================================
-// HELPER FUNCTIONS - Web Search & API
+// SIMPLE HELPERS
 // ========================================
 
 function shouldSearchWeb(message: string): boolean {
-  const messageLower = message.toLowerCase();
-  
-  const timeTriggers = [
-    'ultime', 'recenti', 'aggiornamenti', 'nuove', 'latest', 'recent', 'new',
-    'oggi', 'ieri', 'yesterday', 'settimana', 'week', 'mese', 'month',
-    '2024', '2025', '2026',
-    'notizie', 'news', 'novità', 'update', 'aggiorna',
-    'dimostra', 'cerca', 'trova', 'search', 'veloce', 'controllare internet',
-  ];
-  
-  const docTriggers = [
-    'comunicazione', 'provvedimento', 'circolare', 'parere',
-    'rapporto', 'report', 'pubblicazione', 'publication',
-  ];
-  
-  const listTriggers = [
-    'lista', 'list', 'grey list', 'greylist', 'blacklist',
-    'sanzion', 'sanction', 'paesi ad alto rischio', 'high risk',
-  ];
-  
-  return [...timeTriggers, ...docTriggers, ...listTriggers].some(
-    trigger => messageLower.includes(trigger)
-  );
+  // SEMPRE cerca sul web per domande compliance
+  return true;
 }
 
 function shouldQueryAPIs(message: string): boolean {
-  const triggers = [
-    'sanzione', 'sanctioned', 'pep', 'politically exposed',
-    'lista', 'blacklist', 'sdn', 'ofac',
-    'società', 'company', 'azienda', 'impresa',
-    'è sanzionata', 'is sanctioned', 'check',
-    'grey list', 'greylist', 'paesi ad alto rischio',
-  ];
-  return triggers.some(trigger => message.toLowerCase().includes(trigger));
-}
-
-function detectQueryType(message: string): string {
-  if (/sanzione|sanction|lista|blacklist|sdn|ofac|grey.*list/i.test(message)) return 'sanctions';
-  if (/società|company|azienda|impresa|firm/i.test(message)) return 'company';
-  if (/normativa|legge|direttiva|regolamento|directive|regulation/i.test(message)) return 'legislation';
-  return 'all';
-}
-
-function extractEntityName(message: string): string {
-  const quoted = message.match(/"([^"]+)"/);
-  if (quoted) return quoted[1];
-  
-  const afterCheck = message.match(/(?:check|verifica|controlla|cerca)\s+([A-Z][a-zA-Z\s&.,]+?)(?:\s+(?:è|is|nella|in|sul))/i);
-  if (afterCheck) return afterCheck[1].trim();
-  
-  const words = message.split(' ').filter(w => /^[A-Z]/.test(w));
-  if (words.length > 0) return words.slice(-3).join(' ');
-  
-  return message.split(' ').slice(0, 5).join(' ');
-}
-
-// ========================================
-// KEYWORD EXTRACTION
-// ========================================
-
-function extractKeywords(message: string): string[] {
-  const keywords: string[] = [];
-  const messageLower = message.toLowerCase();
-  
-  const specificTerms = [
-    'indicatori anomalia', 'indicatori di anomalia', 'segnali di allerta',
-    'istituto pagamento', 'istituti di pagamento', 'payment institution',
-    'adeguata verifica', 'customer due diligence', 'cdd',
-    'enhanced due diligence', 'edd', 'verifica rafforzata',
-    'pep', 'persone politicamente esposte',
-    'segnalazione operazioni sospette', 'sos', 'str',
-    'travel rule', 'wire transfer', 'bonifico',
-    'virtual assets', 'vasp', 'crypto', 'criptovalute',
-    'titolare effettivo', 'beneficial owner',
-    'paesi ad alto rischio', 'high risk countries',
-    'grey list', 'blacklist', 'lista grigia',
-    'fatf recommendation', 'raccomandazione fatf',
-    'direttiva', 'regolamento', 'circolare',
-    'provvedimento', 'comunicazione uif',
-    'art.', 'articolo', 'd.lgs', 'decreto',
-  ];
-  
-  specificTerms.forEach(term => {
-    if (messageLower.includes(term)) {
-      keywords.push(term);
-    }
-  });
-  
-  const entities = [
-    'uif', 'fatf', 'gafi', 'eba', 'esma', 'consob',
-    'kyc', 'aml', 'cft', 'ml/tf', 'mlro',
-  ];
-  
-  entities.forEach(entity => {
-    if (messageLower.includes(entity)) {
-      keywords.push(entity);
-    }
-  });
-  
-  return [...new Set(keywords)];
+  const triggers = ['sanzione', 'sanctioned', 'pep', 'lista', 'blacklist', 'sdn', 'ofac', 'grey list'];
+  return triggers.some(t => message.toLowerCase().includes(t));
 }
 
 // ========================================
@@ -130,140 +37,42 @@ function extractKeywords(message: string): string[] {
 // ========================================
 
 async function classifyIntent(message: string): Promise<{
-  primary_intent: 'greeting' | 'how_are_you' | 'compliance_question' | 'off_topic';
+  primary_intent: 'greeting' | 'compliance_question' | 'off_topic';
   has_compliance_question: boolean;
   language: 'it' | 'en';
-  confidence: number;
 }> {
-  const classificationPrompt = `You are an intent classifier. Analyze this message and return ONLY a JSON object.
-
-Message: "${message}"
-
-Return this exact structure:
-{
-  "primary_intent": "greeting" | "how_are_you" | "compliance_question" | "off_topic",
-  "has_compliance_question": true/false,
-  "language": "it" | "en",
-  "confidence": 0.0-1.0
-}
-
-Rules:
-- "primary_intent": the MAIN intent
-  * "greeting": ONLY simple greeting without context
-  * "how_are_you": ONLY asking wellbeing
-  * "compliance_question": ANY hint of wanting AML/compliance info
-    Even vague requests like "fammi vedere", "dimostra", "controlla internet"
-  * "off_topic": unrelated topics
-
-- "has_compliance_question": true if ANY indication user wants compliance info
-  Keywords: AML, CFT, KYC, notizie, ultime, veloce, dimostra, controlla, cerca
-
-- If greeting in compliance context, set:
-  primary_intent: "compliance_question"
-  has_compliance_question: true
-
-Return ONLY JSON.`;
-
-  try {
-    const completion = await groq.chat.completions.create({
-      messages: [{ role: 'user', content: classificationPrompt }],
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0.1,
-      max_tokens: 150,
-    });
-
-    const response = completion.choices[0]?.message?.content?.trim() || '{}';
-    const jsonMatch = response.match(/\{[\s\S]*\}/);
-    
-    if (jsonMatch) {
-      return JSON.parse(jsonMatch[0]);
-    }
-    
-    return { 
-      primary_intent: 'compliance_question', 
-      has_compliance_question: true,
-      language: 'en', 
-      confidence: 0.5 
-    };
-  } catch (error) {
-    console.error('Intent classification error:', error);
-    return { 
-      primary_intent: 'compliance_question',
-      has_compliance_question: true, 
-      language: 'en', 
-      confidence: 0.5 
-    };
-  }
-}
-
-// ========================================
-// EXTRACT SOURCES & BUILD CITATIONS
-// ========================================
-
-interface Citation {
-  id: number;
-  source: string;
-  title: string;
-  date?: string;
-  url?: string;
-}
-
-function extractCitations(contextText: string, webContent: any[], apiContent: any[]): Citation[] {
-  const citations: Citation[] = [];
-  let citationId = 1;
-
-  if (webContent && webContent.length > 0) {
-    webContent.forEach((item: any) => {
-      citations.push({
-        id: citationId++,
-        source: item.source || 'Web',
-        title: item.title || 'Documento web',
-        url: item.url,
-      });
-    });
-  }
-
-  if (apiContent && apiContent.length > 0) {
-    apiContent.forEach((item: any) => {
-      citations.push({
-        id: citationId++,
-        source: item.source || 'API',
-        title: typeof item.data === 'string' ? item.data.substring(0, 80) : 'API Result',
-        url: item.url,
-      });
-    });
-  }
-
-  const dbMatches = contextText.match(/\[DB - ([^\]]+?)(?: - (\d{4}-\d{2}-\d{2}))?\]/g);
-  if (dbMatches) {
-    const uniqueDB = new Set<string>();
-    dbMatches.forEach(match => {
-      const parsed = match.match(/\[DB - ([^\]]+?)(?: - (\d{4}-\d{2}-\d{2}))?\]/);
-      if (parsed && !uniqueDB.has(parsed[1])) {
-        uniqueDB.add(parsed[1]);
-        citations.push({
-          id: citationId++,
-          source: parsed[1],
-          title: 'Database interno',
-          date: parsed[2],
-        });
-      }
-    });
-  }
-
-  return citations;
-}
-
-function buildCitationsFooter(citations: Citation[], lang: 'it' | 'en'): string {
-  if (citations.length === 0) return '';
-
-  const header = lang === 'it' ? '\n\n---\n\n**Fonti:**\n' : '\n\n---\n\n**Sources:**\n';
+  const messageLower = message.toLowerCase();
   
-  return header + citations.map(c => {
-    const dateStr = c.date ? ` (${c.date})` : '';
-    const urlStr = c.url ? ` - [Link](${c.url})` : '';
-    return `\n**[${c.id}]** ${c.source}${dateStr}: ${c.title}${urlStr}`;
-  }).join('');
+  // Simple heuristic classification
+  const complianceKeywords = [
+    'aml', 'cft', 'kyc', 'cdd', 'edd', 'pep', 'fatf', 'uif', 'eba',
+    'antiriciclaggio', 'riciclaggio', 'compliance', 'normativa',
+    'ultime', 'notizie', 'news', 'indicatori', 'procedure', 'obblighi',
+  ];
+  
+  const hasComplianceKeyword = complianceKeywords.some(kw => messageLower.includes(kw));
+  
+  if (hasComplianceKeyword) {
+    return {
+      primary_intent: 'compliance_question',
+      has_compliance_question: true,
+      language: messageLower.match(/\b(the|is|are|what|how)\b/) ? 'en' : 'it',
+    };
+  }
+  
+  if (/^(ciao|hello|hi|hey|buongiorno|salve)$/i.test(messageLower.trim())) {
+    return {
+      primary_intent: 'greeting',
+      has_compliance_question: false,
+      language: messageLower.match(/hello|hi|hey/) ? 'en' : 'it',
+    };
+  }
+  
+  return {
+    primary_intent: 'compliance_question',
+    has_compliance_question: true,
+    language: 'it',
+  };
 }
 
 // ========================================
@@ -287,277 +96,207 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ response: cached.response, cached: true });
       }
 
+      console.log(`\n💬 Compliance question: "${message}"`);
+      console.log(`🌐 Language: ${lang}`);
+
       // ========================================
-      // 1. SEARCH DATABASE - IMPROVED
+      // SEARCH: DB + WEB in PARALLEL
       // ========================================
-      let context: any[] = [];
-      const keywords = extractKeywords(message);
       
-      console.log(`🔑 Keywords: ${keywords.length > 0 ? keywords.join(', ') : 'none'}`);
-
-      if (keywords.length > 0) {
-        const orConditions = keywords.map(k => `title.ilike.%${k}%,content.ilike.%${k}%`).join(',');
-        
-        const { data: exactMatches } = await supabase
-          .from('aml_knowledge')
-          .select('content, source, title, date, category')
-          .or(orConditions)
-          .order('date', { ascending: false })
-          .limit(5);
-        
-        if (exactMatches) {
-          context.push(...exactMatches);
-          console.log(`  ✅ Exact matches: ${exactMatches.length}`);
-        }
-      }
-
-      const { data: fullTextResults } = await supabase
+      const startTime = Date.now();
+      
+      // Database search (limited, quick)
+      const dbPromise = supabase
         .from('aml_knowledge')
-        .select('content, source, title, date, category')
+        .select('content, source, title, date')
         .textSearch('content', message)
         .order('date', { ascending: false })
-        .limit(5);
+        .limit(3);
 
-      if (fullTextResults) {
-        fullTextResults.forEach((result: any) => {
-          if (!context.find((c: any) => c.title === result.title)) {
-            context.push(result);
-          }
-        });
-        console.log(`  ✅ Full-text results: ${fullTextResults.length}`);
-      }
+      // Web search (ALWAYS)
+      const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://comply-panda.vercel.app';
+      const webPromise = fetch(`${baseUrl}/api/search-external`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: message }),
+      }).then(r => r.ok ? r.json() : null);
 
-      context = context.slice(0, 8);
-
-      const shouldPrioritizeWeb = !context || 
-        context.length < 2 || 
-        (context.every((c: any) => !c.date || new Date(c.date) < new Date('2023-01-01')));
-
-      console.log(`📊 Total DB results: ${context?.length || 0}`);
-      console.log(`⚡ Should prioritize web: ${shouldPrioritizeWeb}`);
-
-      // ========================================
-      // 2. SEARCH WEB - SEMPRE ATTIVO
-      // ========================================
-      let webContext = '';
-      let webContentArray: any[] = [];
-
-      console.log(`🔍 Web search: ALWAYS ON for compliance questions`);
-
-      try {
-        console.log('🌐 Triggering web search...');
-        const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://comply-panda.vercel.app';
-        const webResponse = await fetch(`${baseUrl}/api/search-external`, {
+      // API search (conditional)
+      let apiPromise = Promise.resolve(null);
+      if (shouldQueryAPIs(message)) {
+        apiPromise = fetch(`${baseUrl}/api/external-apis`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ query: message }),
+          body: JSON.stringify({ query: message, type: 'all' }),
+        }).then(r => r.ok ? r.json() : null);
+      }
+
+      // Wait for all searches
+      const [dbResult, webResult, apiResult] = await Promise.all([
+        dbPromise,
+        webPromise,
+        apiPromise,
+      ]);
+
+      const searchTime = Date.now() - startTime;
+      console.log(`⏱️  Search completed in ${searchTime}ms`);
+
+      // ========================================
+      // BUILD CONTEXT
+      // ========================================
+      
+      const dbContext = dbResult.data || [];
+      const webContent = (webResult as any)?.content || [];
+      const apiContent = (apiResult as any)?.results || [];
+
+      console.log(`📊 Sources found:`);
+      console.log(`  - DB: ${dbContext.length}`);
+      console.log(`  - Web: ${webContent.length}`);
+      console.log(`  - API: ${apiContent.length}`);
+
+      // Build rich context string
+      let contextParts: string[] = [];
+
+      // WEB first (most important for "ultime notizie")
+      if (webContent.length > 0) {
+        contextParts.push('=== WEB SOURCES (MOST RECENT) ===\n');
+        webContent.forEach((item: any, idx: number) => {
+          contextParts.push(
+            `[${idx + 1}] ${item.source} - ${item.title}\n` +
+            `URL: ${item.url}\n` +
+            `Content: ${item.content.substring(0, 800)}\n\n`
+          );
         });
-        
-        if (webResponse.ok) {
-          const webData = await webResponse.json();
-          
-          if (webData.content && webData.content.length > 0) {
-            webContentArray = webData.content;
-            webContext = webData.content
-              .map((item: any, idx: number) => `[WEB-${idx + 1}] ${item.source}: ${item.title}\n${item.content}`)
-              .join('\n\n---\n\n');
-            console.log(`✅ Found ${webData.content.length} web results`);
-          } else {
-            console.log('⚠️  Web search returned no results');
-          }
-        } else {
-          console.error(`❌ Web search failed: ${webResponse.status}`);
-        }
-      } catch (error: any) {
-        console.error('❌ Web search error:', error.message);
       }
 
-      // ========================================
-      // 3. QUERY EXTERNAL APIs (if needed)
-      // ========================================
-      let apiContext = '';
-      let apiContentArray: any[] = [];
-      if (shouldQueryAPIs(message)) {
-        try {
-          console.log('🔍 Querying external APIs...');
-          const entityName = extractEntityName(message);
-          const queryType = detectQueryType(message);
-          
-          const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || 'https://comply-panda.vercel.app';
-          const apiResponse = await fetch(`${baseUrl}/api/external-apis`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              query: entityName,
-              type: queryType,
-            }),
-          });
-          
-          if (apiResponse.ok) {
-            const apiData = await apiResponse.json();
-            
-            if (apiData.results && apiData.results.length > 0) {
-              apiContentArray = apiData.results;
-              apiContext = apiData.results
-                .map((item: any, idx: number) => {
-                  const dataStr = typeof item.data === 'object' 
-                    ? JSON.stringify(item.data, null, 2).substring(0, 1000)
-                    : String(item.data).substring(0, 1000);
-                  return `[API-${idx + 1}] ${item.source}\n${dataStr}`;
-                })
-                .join('\n\n---\n\n');
-              console.log(`✅ Found ${apiData.results.length} API results`);
-            }
-          }
-        } catch (error: any) {
-          console.error('❌ API query error:', error);
-        }
+      // API results
+      if (apiContent.length > 0) {
+        contextParts.push('=== API RESULTS (REAL-TIME DATA) ===\n');
+        apiContent.forEach((item: any, idx: number) => {
+          const data = typeof item.data === 'object' ? JSON.stringify(item.data) : item.data;
+          contextParts.push(`[API-${idx + 1}] ${item.source}: ${data.substring(0, 500)}\n\n`);
+        });
       }
 
-      // ========================================
-      // 4. COMBINE ALL CONTEXTS
-      // ========================================
-      const dbContext = context && context.length > 0
-        ? context.map((item: any, idx: number) => {
-            let relevantContent: string = item.content;
-            
-            if (keywords.length > 0) {
-              const paragraphs: string[] = item.content.split('\n\n');
-              const relevantParagraphs: string[] = paragraphs.filter((p: string) => 
-                keywords.some((k: string) => p.toLowerCase().includes(k.toLowerCase()))
-              );
-              
-              if (relevantParagraphs.length > 0) {
-                relevantContent = relevantParagraphs.join('\n\n').substring(0, 1500);
-              } else {
-                relevantContent = item.content.substring(0, 1500);
-              }
-            } else {
-              relevantContent = item.content.substring(0, 1500);
-            }
-            
-            return `[DB-${idx + 1}] ${item.source}${item.date ? ` - ${item.date}` : ''}: ${item.title}\n${relevantContent}`;
-          }).join('\n\n---\n\n')
-        : '';
+      // DB last (general knowledge)
+      if (dbContext.length > 0) {
+        contextParts.push('=== DATABASE (GENERAL KNOWLEDGE) ===\n');
+        dbContext.forEach((item: any, idx: number) => {
+          contextParts.push(
+            `[DB-${idx + 1}] ${item.source} - ${item.title}\n` +
+            `Content: ${item.content.substring(0, 600)}\n\n`
+          );
+        });
+      }
 
-      const allContexts = [dbContext, webContext, apiContext].filter(Boolean);
-      const hasContext = allContexts.length > 0;
-      const contextText = allContexts.join('\n\n━━━━━━ ADDITIONAL SOURCES ━━━━━━\n\n');
-
-      const citations = extractCitations(contextText, webContentArray, apiContentArray);
+      const hasContext = contextParts.length > 0;
+      const fullContext = contextParts.join('');
 
       // ========================================
-      // 5. GENERATE AI RESPONSE
+      // GENERATE RESPONSE - Natural Style
       // ========================================
+
       const systemPrompt = lang === 'it'
-        ? `Sei Panda 🐼, esperto compliance AML/CFT italiano.
+        ? `Sei Panda 🐼, un assistente AI esperto in compliance AML/CFT.
 
-STILE: Diretto, preciso, professionale. NO saluti automatici.
+**STILE DI RISPOSTA:**
+- Naturale e conversazionale
+- Diretto ed efficace
+- Umano, mai robotico
+- Usa un tono professionale ma amichevole
 
-STRUTTURA RISPOSTA:
+**COME RISPONDERE:**
 
-DOMANDA SPECIFICA (es. "indicatori anomalia istituti pagamento"):
-1. Vai DIRETTO ai dati ESATTI dai documenti
-2. Lista PRECISA (numerata)
-3. Cita fonte per ogni punto: (1), (2), (3)
-4. MAX 150 parole
-5. NO esempi generici se hai dati concreti
+Se l'utente chiede "ultime notizie" o info recenti:
+- Inizia con: "Ho trovato alcune notizie recenti interessanti:"
+- Elenca 3-4 punti principali dalle fonti WEB (le più aggiornate)
+- Menziona le fonti in modo naturale: "Secondo [fonte]..." o "Su [sito] leggo che..."
+- Alla fine aggiungi link: "Puoi approfondire qui: [link]"
 
-DOMANDA GENERICA (es. "cos'è AML"):
-1. Definizione breve (2-3 righe)
-2. 3-5 punti chiave con •
-3. Esempio SE utile
-4. MAX 250 parole
+Per domande specifiche (es. "cos'è la CDD"):
+- Definizione chiara e breve
+- 3-4 punti chiave
+- Esempio pratico se utile
+- Riferimenti alle fonti quando pertinenti
 
-CASI SPECIALI:
+**IMPORTANTISSIMO:**
+- NON usare MAI bullet points secchi tipo "• Punto 1"
+- NON scrivere come un elenco telegrafico
+- Scrivi come se stessi parlando a un collega
+- Usa paragrafi e frasi complete
+- Temperature alta = risposte varie e naturali
 
-INDICATORI ANOMALIA:
-✅ CORRETTO: Estrai lista ESATTA da documento
-"Secondo UIF (1):
-1. Frazionamento sotto €15.000
-2. Uso ripetuto contanti
-3. Transazioni paesi non cooperativi"
+${hasContext ? `**FONTI DISPONIBILI:**
+${fullContext}
 
-❌ SBAGLIATO: "Transazioni sospette, comportamenti insoliti..."
+**COME USARE LE FONTI:**
+- Le fonti WEB sono le PIÙ RECENTI → usale per notizie e aggiornamenti
+- Le fonti API sono REAL-TIME → usale per verifiche (sanctions, PEP, etc)
+- Le fonti DB sono CONOSCENZA GENERALE → usale solo se WEB/API insufficienti
 
-NORMATIVA: Cita ESATTAMENTE testo, specifica art./comma
+Menziona le fonti in modo naturale nel testo, non con numeri (1)(2)(3).
+Esempio: "Secondo un recente articolo su Il Sole 24 Ore..." invece di "(1)"` : 
+`**NESSUNA FONTE DISPONIBILE**
 
-CITAZIONI: (1), (2), (3) nel testo. Fonti in fondo automatiche.
+Rispondi comunque usando la tua conoscenza generale su AML/CFT, ma specifica:
+"Non ho trovato fonti aggiornate al momento, ma posso dirti che..."
 
-${hasContext ? `FONTI:
-${contextText}
+Suggerisci di consultare: bancaditalia.it, uif.bancaditalia.it, fatf-gafi.org`}
 
-PRIORITÀ:
-1. API = real-time
-2. WEB = aggiornate (PREFERISCI SE DISPONIBILI)
-3. DB = base documentale
+**DOMANDA UTENTE:**
+"${message}"
 
-REGOLE:
-- Se WEB ha risposta specifica → USA QUELLA
-- Estrai DATI SPECIFICI quando disponibili
-- Diversifica fonti (FATF + EBA + UIF)
-- Se DB vecchio + WEB recente → USA WEB` : `NESSUNA FONTE.
-- NON inventare
-- Ammetti: "Non ho documenti specifici"
-- Suggerisci fonti ufficiali`}
+Rispondi in modo naturale, completo e utile.`
+        : `You are Panda 🐼, an AI assistant expert in AML/CFT compliance.
 
-Messaggio: "${message}"
+**RESPONSE STYLE:**
+- Natural and conversational
+- Direct and effective
+- Human, never robotic
+- Professional but friendly tone
 
-Rispondi PRECISO e CONCISO. Usa (1), (2) per citare.`
-        : `You are Panda 🐼, AML/CFT compliance expert.
+**HOW TO RESPOND:**
 
-STYLE: Direct, precise, professional. NO auto-greetings.
+For "latest news" or recent info:
+- Start with: "I found some interesting recent news:"
+- List 3-4 main points from WEB sources (most updated)
+- Mention sources naturally: "According to [source]..." or "On [site] I read that..."
+- Add links at the end: "You can learn more here: [link]"
 
-ANSWER STRUCTURE:
+For specific questions (e.g., "what is CDD"):
+- Clear and brief definition
+- 3-4 key points
+- Practical example if useful
+- Source references when relevant
 
-SPECIFIC QUESTION (e.g., "anomaly indicators payment institutions"):
-1. Go DIRECT to EXACT data from documents
-2. PRECISE list (numbered)
-3. Cite source for each point: (1), (2), (3)
-4. MAX 150 words
-5. NO generic examples if you have concrete data
+**VERY IMPORTANT:**
+- NEVER use dry bullet points like "• Point 1"
+- DON'T write as a telegraphic list
+- Write as if talking to a colleague
+- Use paragraphs and complete sentences
+- High temperature = varied and natural responses
 
-GENERIC QUESTION (e.g., "what is AML"):
-1. Brief definition (2-3 lines)
-2. 3-5 key points with •
-3. Example IF useful
-4. MAX 250 words
+${hasContext ? `**AVAILABLE SOURCES:**
+${fullContext}
 
-SPECIAL CASES:
+**HOW TO USE SOURCES:**
+- WEB sources are MOST RECENT → use for news and updates
+- API sources are REAL-TIME → use for checks (sanctions, PEP, etc)
+- DB sources are GENERAL KNOWLEDGE → use only if WEB/API insufficient
 
-ANOMALY INDICATORS:
-✅ CORRECT: Extract EXACT list from document
-"Per UIF (1):
-1. Structuring below €15,000
-2. Repeated cash use
-3. Transactions to non-cooperative countries"
+Mention sources naturally in text, not with numbers (1)(2)(3).
+Example: "According to a recent article on Il Sole 24 Ore..." instead of "(1)"` :
+`**NO SOURCES AVAILABLE**
 
-❌ WRONG: "Suspicious transactions, unusual behavior..."
+Answer using your general AML/CFT knowledge, but specify:
+"I didn't find updated sources at the moment, but I can tell you that..."
 
-LEGISLATION: Cite EXACTLY, specify art./section
+Suggest consulting: bancaditalia.it, uif.bancaditalia.it, fatf-gafi.org`}
 
-CITATIONS: (1), (2), (3) in text. Full sources auto-added.
+**USER QUESTION:**
+"${message}"
 
-${hasContext ? `SOURCES:
-${contextText}
-
-PRIORITY:
-1. API = real-time
-2. WEB = updated (PREFER IF AVAILABLE)
-3. DB = documentation base
-
-RULES:
-- If WEB has specific answer → USE THAT
-- Extract SPECIFIC DATA when available
-- Diversify sources (FATF + EBA + UIF)
-- If old DB + recent WEB → USE WEB` : `NO SOURCES.
-- Don't invent
-- Admit: "I don't have specific documents"
-- Suggest official sources`}
-
-Message: "${message}"
-
-Respond PRECISELY and CONCISELY. Use (1), (2) to cite.`;
+Respond naturally, completely, and helpfully.`;
 
       const completion = await groq.chat.completions.create({
         messages: [
@@ -565,25 +304,18 @@ Respond PRECISELY and CONCISELY. Use (1), (2) to cite.`;
           { role: 'user', content: message },
         ],
         model: 'llama-3.3-70b-versatile',
-        temperature: 0.8,
-        max_tokens: 1800,
+        temperature: 0.95,
+        max_tokens: 2000,
+        top_p: 0.9,
       });
 
       let response = completion.choices[0]?.message?.content || 
-        (lang === 'it' ? 'Errore. Riprova.' : 'Error. Try again.');
+        (lang === 'it' ? 'Mi dispiace, c\'è stato un errore. Riprova.' : 'Sorry, there was an error. Try again.');
 
-      response = response.replace(/^["']|["']$/g, '');
-      if (response.startsWith('"') && response.endsWith('"')) {
-        response = response.slice(1, -1);
-      }
-      if (response.startsWith("'") && response.endsWith("'")) {
-        response = response.slice(1, -1);
-      }
+      // Clean response
+      response = response.replace(/^["']|["']$/g, '').trim();
 
-      if (citations.length > 0) {
-        response += buildCitationsFooter(citations, lang);
-      }
-
+      // Cache
       responseCache.set(cacheKey, { response, timestamp: Date.now() });
 
       if (responseCache.size > 100) {
@@ -593,47 +325,36 @@ Respond PRECISELY and CONCISELY. Use (1), (2) to cite.`;
         sorted.slice(0, 100).forEach(([key, value]) => responseCache.set(key, value));
       }
 
+      console.log(`✅ Response generated (${response.length} chars)`);
+
       return NextResponse.json({ response, cached: false });
     }
 
     // ========================================
-    // HANDLE SIMPLE GREETINGS
+    // HANDLE GREETINGS
     // ========================================
-    const simpleResponsePrompt = lang === 'it'
-      ? `Sei Panda 🐼, rispondi brevemente (max 2 righe):
-"${message}"
-NO virgolette. Italiano friendly. Invita a domande AML/CFT.`
-      : `You are Panda 🐼, respond briefly (max 2 lines):
-"${message}"
-NO quotes. English friendly. Invite AML/CFT questions.`;
+    const greetingPrompt = lang === 'it'
+      ? `Rispondi a questo saluto in modo amichevole e breve (max 2 righe): "${message}"\n\nInvita a fare domande su AML/CFT. Stile naturale e conversazionale.`
+      : `Respond to this greeting friendly and briefly (max 2 lines): "${message}"\n\nInvite to ask about AML/CFT. Natural conversational style.`;
 
-    const simpleCompletion = await groq.chat.completions.create({
-      messages: [{ role: 'user', content: simpleResponsePrompt }],
+    const greetingCompletion = await groq.chat.completions.create({
+      messages: [{ role: 'user', content: greetingPrompt }],
       model: 'llama-3.3-70b-versatile',
-      temperature: 0.9,
+      temperature: 0.95,
       max_tokens: 100,
     });
 
-    let simpleResponse = simpleCompletion.choices[0]?.message?.content?.trim() ||
+    let greetingResponse = greetingCompletion.choices[0]?.message?.content?.trim() ||
       (lang === 'it' ? 'Ciao! Come posso aiutarti?' : 'Hello! How can I help?');
 
-    simpleResponse = simpleResponse.replace(/^["']|["']$/g, '');
-    if (simpleResponse.startsWith('"') && simpleResponse.endsWith('"')) {
-      simpleResponse = simpleResponse.slice(1, -1);
-    }
-    if (simpleResponse.startsWith("'") && simpleResponse.endsWith("'")) {
-      simpleResponse = simpleResponse.slice(1, -1);
-    }
+    greetingResponse = greetingResponse.replace(/^["']|["']$/g, '').trim();
 
-    return NextResponse.json({ response: simpleResponse });
+    return NextResponse.json({ response: greetingResponse });
 
   } catch (error: any) {
     console.error('Chat API error:', error);
     return NextResponse.json(
-      { 
-        error: 'Internal server error',
-        details: process.env.NODE_ENV === 'development' ? error.message : undefined
-      },
+      { error: 'Internal server error', details: error.message },
       { status: 500 }
     );
   }
