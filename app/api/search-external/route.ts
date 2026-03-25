@@ -7,14 +7,8 @@ interface SearchResult {
   url: string;
   title: string;
   snippet: string;
-}
-
-interface ScrapeResult {
-  source: string;
-  url: string;
-  found: boolean;
-  content: string;
-  fullContent: string;
+  date?: string;
+  relevanceScore?: number;
 }
 
 interface ContentResult {
@@ -22,93 +16,41 @@ interface ContentResult {
   title: string;
   content: string;
   source: string;
-}
-
-const SOURCES = [
-  {
-    name: 'Banca Italia - News',
-    url: 'https://www.bancaditalia.it/media/notizie/index.html',
-    selector: '.news-list, .content, main',
-  },
-  {
-    name: 'UIF - Comunicazioni',
-    url: 'https://uif.bancaditalia.it/normativa/norm-comunicazioni-uif/index.html',
-    selector: '.content, main, article',
-  },
-];
-
-async function scrapeSite(source: typeof SOURCES[0], query: string): Promise<ScrapeResult | null> {
-  try {
-    console.log(`🔍 Scraping ${source.name}...`);
-    
-    const { data } = await axios.get(source.url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
-      },
-      timeout: 15000,
-    });
-
-    const $ = cheerio.load(data);
-    $('script, style, nav, header, footer').remove();
-    
-    const content = $(source.selector).first().text()
-      .replace(/\s+/g, ' ')
-      .trim();
-
-    if (content.length > 100) {
-      return {
-        source: source.name,
-        url: source.url,
-        found: true,
-        content: content.substring(0, 500),
-        fullContent: content.substring(0, 3000),
-      };
-    }
-
-    return null;
-
-  } catch (error: any) {
-    console.error(`❌ Error scraping ${source.name}:`, error.message);
-    return null;
-  }
+  date?: string;
+  relevanceScore: number;
 }
 
 // ========================================
-// BING SEARCH (Illimitato via HTML scraping)
+// MULTI-SOURCE SEARCH ENGINES
 // ========================================
 
+// Bing (primary - best for Italian content)
 async function bingSearch(query: string): Promise<SearchResult[]> {
   try {
-    console.log(`🔍 Bing search: "${query}"`);
+    console.log(`🔍 Bing: "${query}"`);
     
-    // Costruisci query ottimizzata
-    let searchQuery = buildOptimizedQuery(query);
-    
-    const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(searchQuery)}`;
+    const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}`;
     
     const { data } = await axios.get(bingUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
         'Accept-Language': 'it-IT,it;q=0.9,en;q=0.8',
       },
-      timeout: 15000,
+      timeout: 12000,
     });
 
     const $ = cheerio.load(data);
     const results: SearchResult[] = [];
 
-    // Parse Bing results
-    $('.b_algo').slice(0, 5).each((_, elem) => {
+    $('.b_algo').slice(0, 8).each((_, elem) => {
       const title = $(elem).find('h2 a').text().trim();
       const link = $(elem).find('h2 a').attr('href');
       const snippet = $(elem).find('.b_caption p').text().trim();
 
       if (title && link && link.startsWith('http')) {
         results.push({
-          source: new URL(link).hostname,
+          source: extractDomain(link),
           title,
           url: link,
           snippet,
@@ -116,44 +58,38 @@ async function bingSearch(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`✅ Bing: ${results.length} results`);
+    console.log(`  ✅ Bing: ${results.length}`);
     return results;
 
   } catch (error: any) {
-    console.error('❌ Bing error:', error.message);
+    console.error(`❌ Bing error: ${error.message}`);
     return [];
   }
 }
 
-// ========================================
-// DUCKDUCKGO SEARCH (Fallback)
-// ========================================
-
-async function fallbackDuckDuckGo(query: string): Promise<SearchResult[]> {
+// DuckDuckGo (fallback)
+async function duckDuckGoSearch(query: string): Promise<SearchResult[]> {
   try {
     console.log(`🦆 DuckDuckGo: "${query}"`);
     
-    const searchQuery = buildOptimizedQuery(query);
-    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(searchQuery)}`;
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
     
     const { data } = await axios.get(ddgUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-      },
-      timeout: 15000,
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 10000,
     });
 
     const $ = cheerio.load(data);
     const results: SearchResult[] = [];
 
-    $('.result, .results_links_deep').slice(0, 5).each((_, elem) => {
+    $('.result').slice(0, 8).each((_, elem) => {
       const title = $(elem).find('a.result__a').text().trim();
       const link = $(elem).find('a.result__a').attr('href');
       const snippet = $(elem).find('.result__snippet').text().trim();
 
       if (title && link) {
         results.push({
-          source: 'DuckDuckGo',
+          source: extractDomain(link),
           title,
           url: link,
           snippet,
@@ -161,55 +97,244 @@ async function fallbackDuckDuckGo(query: string): Promise<SearchResult[]> {
       }
     });
 
-    console.log(`✅ DuckDuckGo: ${results.length} results`);
+    console.log(`  ✅ DDG: ${results.length}`);
     return results;
 
   } catch (error: any) {
-    console.error('❌ DuckDuckGo error:', error.message);
+    console.error(`❌ DDG error: ${error.message}`);
+    return [];
+  }
+}
+
+// Google News RSS (for latest articles)
+async function googleNewsRSS(query: string): Promise<SearchResult[]> {
+  try {
+    console.log(`📰 Google News RSS: "${query}"`);
+    
+    const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query + ' AML compliance antiriciclaggio')}&hl=it&gl=IT&ceid=IT:it`;
+    
+    const { data } = await axios.get(rssUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0' },
+      timeout: 10000,
+    });
+
+    const $ = cheerio.load(data, { xmlMode: true });
+    const results: SearchResult[] = [];
+
+    $('item').slice(0, 5).each((_, elem) => {
+      const title = $(elem).find('title').text().trim();
+      const link = $(elem).find('link').text().trim();
+      const pubDate = $(elem).find('pubDate').text().trim();
+      const description = $(elem).find('description').text().trim();
+
+      if (title && link) {
+        results.push({
+          source: extractDomain(link),
+          title,
+          url: link,
+          snippet: description,
+          date: pubDate,
+        });
+      }
+    });
+
+    console.log(`  ✅ Google News: ${results.length}`);
+    return results;
+
+  } catch (error: any) {
+    console.error(`❌ Google News error: ${error.message}`);
     return [];
   }
 }
 
 // ========================================
-// QUERY OPTIMIZER
+// INTELLIGENT CONTENT SCRAPER
 // ========================================
 
-function buildOptimizedQuery(query: string): string {
+async function smartScrapeContent(url: string, title: string): Promise<ContentResult | null> {
+  try {
+    const { data } = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml',
+      },
+      timeout: 8000,
+      maxRedirects: 3,
+    });
+
+    const $ = cheerio.load(data);
+    
+    // Remove noise
+    $('script, style, nav, header, footer, aside, .menu, .sidebar, .ads, .cookie-banner, .social-share').remove();
+    
+    // Smart content extraction - try multiple selectors
+    const contentSelectors = [
+      'article',
+      'main',
+      '.article-content',
+      '.post-content',
+      '.entry-content',
+      '.content',
+      '.news-content',
+      '[role="main"]',
+      'body',
+    ];
+
+    let content = '';
+    
+    for (const selector of contentSelectors) {
+      const extracted = $(selector).first().text().trim();
+      if (extracted.length > content.length) {
+        content = extracted;
+      }
+    }
+
+    // Clean up
+    content = content
+      .replace(/\s+/g, ' ')
+      .replace(/Cookie\s+policy.*$/i, '')
+      .replace(/Privacy\s+policy.*$/i, '')
+      .trim();
+
+    // Extract metadata
+    const dateSelectors = ['time', '.date', '.published', '[datetime]'];
+    let date = '';
+    for (const selector of dateSelectors) {
+      date = $(selector).first().attr('datetime') || $(selector).first().text().trim();
+      if (date) break;
+    }
+
+    if (content.length < 200) {
+      return null;
+    }
+
+    // Calculate relevance score
+    const relevanceScore = calculateRelevanceScore(content, title);
+
+    return {
+      url,
+      title,
+      content: content.substring(0, 3000),
+      source: extractDomain(url),
+      date,
+      relevanceScore,
+    };
+
+  } catch (error: any) {
+    console.error(`⚠️  Scrape failed (${url}): ${error.message}`);
+    return null;
+  }
+}
+
+// ========================================
+// AI-POWERED RELEVANCE SCORING
+// ========================================
+
+function calculateRelevanceScore(content: string, title: string): number {
+  const text = (content + ' ' + title).toLowerCase();
+  let score = 0;
+
+  // High-value keywords (20 points each)
+  const highValueKeywords = [
+    'antiriciclaggio', 'riciclaggio', 'aml', 'anti-money laundering',
+    'cft', 'finanziamento terrorismo', 'terrorist financing',
+    'uif', 'fatf', 'gafi', 'eba', 'esma',
+    'adeguata verifica', 'customer due diligence', 'cdd', 'edd',
+    'segnalazione operazioni sospette', 'sos', 'str',
+    'compliance', 'normativa antiriciclaggio',
+  ];
+  
+  highValueKeywords.forEach(keyword => {
+    const regex = new RegExp(keyword, 'gi');
+    const matches = text.match(regex);
+    if (matches) {
+      score += matches.length * 20;
+    }
+  });
+
+  // Medium-value keywords (10 points each)
+  const mediumValueKeywords = [
+    'banca', 'istituto', 'intermediario', 'payment institution',
+    'pep', 'titolare effettivo', 'beneficial owner',
+    'transazione', 'operazione', 'transaction',
+    'sanzioni', 'sanctions', 'lista', 'blacklist',
+    'rischio', 'risk', 'valutazione', 'assessment',
+    'obblighi', 'requirements', 'procedure',
+  ];
+  
+  mediumValueKeywords.forEach(keyword => {
+    const regex = new RegExp(keyword, 'gi');
+    const matches = text.match(regex);
+    if (matches) {
+      score += matches.length * 10;
+    }
+  });
+
+  // Low-value keywords (5 points each)
+  const lowValueKeywords = [
+    'normativa', 'legislation', 'direttiva', 'directive',
+    'regolamento', 'regulation', 'decreto', 'law',
+    'autorità', 'authority', 'vigilanza', 'supervision',
+  ];
+  
+  lowValueKeywords.forEach(keyword => {
+    const regex = new RegExp(keyword, 'gi');
+    const matches = text.match(regex);
+    if (matches) {
+      score += matches.length * 5;
+    }
+  });
+
+  // Penalties
+  if (text.includes('cookie') || text.includes('privacy policy')) {
+    score -= 50;
+  }
+
+  // Bonus for official sources
+  if (text.includes('bancaditalia.it') || text.includes('uif.') || text.includes('fatf-gafi.org')) {
+    score += 100;
+  }
+
+  // Normalize to 0-100
+  return Math.min(100, Math.max(0, score / 10));
+}
+
+// ========================================
+// HELPERS
+// ========================================
+
+function extractDomain(url: string): string {
+  try {
+    const hostname = new URL(url).hostname;
+    return hostname.replace('www.', '');
+  } catch {
+    return 'Unknown';
+  }
+}
+
+function buildSmartQuery(query: string): string {
   const queryLower = query.toLowerCase();
   
-  // CASO 1: Indicatori anomalia
-  if (/indicatori.*anomalia|segnali.*allerta|alert|red flag/i.test(query)) {
-    const entity = query.match(/istitut[oi].*pagamento|payment.*institution|banca|bank|intermediar[io]/i)?.[0] || '';
-    return `indicatori anomalia ${entity} UIF site:uif.bancaditalia.it OR site:bancaditalia.it`;
-  }
+  // Base query always includes AML context
+  let baseQuery = query;
   
-  // CASO 2: Normativa specifica
-  if (/art\.|articolo|d\.lgs|decreto|direttiva|regolamento/i.test(query)) {
-    return `${query} testo normativa site:normattiva.it OR site:eur-lex.europa.eu OR site:bancaditalia.it`;
-  }
-  
-  // CASO 3: Procedure CDD/EDD/KYC
-  if (/cdd|edd|kyc|adeguata verifica|due diligence|verifica.*cliente/i.test(query)) {
-    return `${query} procedura obblighi site:bancaditalia.it OR site:uif.bancaditalia.it OR site:eba.europa.eu`;
-  }
-  
-  // CASO 4: Liste
-  if (/lista|list|pep|sanzioni|sanctions|grey.*list|blacklist/i.test(query)) {
-    return `${query} 2025 2026 site:fatf-gafi.org OR site:eba.europa.eu`;
-  }
-  
-  // CASO 5: Ultime notizie
+  // Add temporal context for news queries
   if (/ultim[ie]|recenti|latest|recent|notizie|news/i.test(query)) {
-    return `${query} 2025 2026 site:bancaditalia.it OR site:fatf-gafi.org OR site:eba.europa.eu`;
+    const year = new Date().getFullYear();
+    baseQuery += ` ${year} ${year - 1}`;
   }
   
-  // CASO 6: FATF
-  if (/fatf|gafi|recommendation/i.test(query)) {
-    return `${query} site:fatf-gafi.org OR site:eba.europa.eu`;
+  // Add AML context if not present
+  if (!/aml|antiriciclaggio|compliance|cft/i.test(query)) {
+    baseQuery += ' AML compliance antiriciclaggio';
   }
   
-  // DEFAULT
-  return `${query} AML compliance antiriciclaggio site:bancaditalia.it OR site:fatf-gafi.org OR site:eba.europa.eu`;
+  // Add document types for specific queries
+  if (/indicatori|segnali|procedure|obblighi/i.test(query)) {
+    baseQuery += ' linee guida circolare comunicazione';
+  }
+  
+  return baseQuery;
 }
 
 // ========================================
@@ -224,80 +349,62 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Query required' }, { status: 400 });
     }
 
-    console.log(`\n🌐 Web search: "${query}"`);
+    console.log(`\n🌐 Intelligent Multi-Source Search: "${query}"`);
 
-    // Direct scraping (veloce)
-    const scrapePromises = SOURCES.map(source => scrapeSite(source, query));
-    const scrapeResults = await Promise.all(scrapePromises);
-    const validScrapes = scrapeResults.filter((r): r is ScrapeResult => r !== null);
+    const smartQuery = buildSmartQuery(query);
+    console.log(`🎯 Optimized query: "${smartQuery}"`);
 
-    console.log(`📊 Direct scrapes: ${validScrapes.length}/${SOURCES.length}`);
+    // PHASE 1: Multi-engine parallel search
+    const [bingResults, ddgResults, newsResults] = await Promise.all([
+      bingSearch(smartQuery),
+      duckDuckGoSearch(smartQuery),
+      googleNewsRSS(query),
+    ]);
 
-    // Web search: Bing primary, DuckDuckGo fallback
-    let searchResults = await bingSearch(query);
+    // Combine and deduplicate
+    const allResults = [...bingResults, ...ddgResults, ...newsResults];
+    const uniqueResults = Array.from(
+      new Map(allResults.map(item => [item.url, item])).values()
+    );
 
-    if (searchResults.length === 0) {
-      console.log('⚠️  Bing empty, trying DuckDuckGo...');
-      searchResults = await fallbackDuckDuckGo(query);
-    }
+    console.log(`📊 Total unique results: ${uniqueResults.length}`);
 
-    const allResults: SearchResult[] = [
-      ...validScrapes.map(r => ({
-        title: `${r.source}`,
-        link: r.url,
-        snippet: r.content,
-        source: r.source,
-        url: r.url,
-      })),
-      ...searchResults,
-    ];
+    // PHASE 2: Parallel intelligent scraping (top 6 results)
+    const scrapePromises = uniqueResults.slice(0, 6).map(result =>
+      smartScrapeContent(result.url, result.title)
+    );
+    
+    const scrapedContents = await Promise.all(scrapePromises);
+    const validContents = scrapedContents.filter((c): c is ContentResult => c !== null);
 
-    console.log(`✅ Total: ${allResults.length} results`);
+    console.log(`✅ Successfully scraped: ${validContents.length}/6`);
 
-    // Scrape top 3 results
-    const contentPromises = allResults.slice(0, 3).map(async (result): Promise<ContentResult> => {
-      try {
-        const { data } = await axios.get(result.url, {
-          headers: { 'User-Agent': 'Mozilla/5.0' },
-          timeout: 10000,
-        });
+    // PHASE 3: Sort by relevance score
+    const sortedContents = validContents.sort((a, b) => b.relevanceScore - a.relevanceScore);
 
-        const $ = cheerio.load(data);
-        $('script, style, nav, header, footer').remove();
-        
-        const text = $('main, article, .content, body')
-          .first()
-          .text()
-          .replace(/\s+/g, ' ')
-          .trim()
-          .substring(0, 2000);
-
-        return {
-          url: result.url,
-          title: result.title,
-          content: text,
-          source: result.source,
-        };
-
-      } catch {
-        return {
-          url: result.url,
-          title: result.title,
-          content: result.snippet || 'Content unavailable',
-          source: result.source,
-        };
-      }
+    // Log relevance scores
+    sortedContents.forEach(c => {
+      console.log(`  📈 ${c.source}: ${c.relevanceScore.toFixed(0)}/100 - ${c.title.substring(0, 60)}...`);
     });
 
-    const content = await Promise.all(contentPromises);
+    // Return top 5 most relevant
+    const topContents = sortedContents.slice(0, 5);
 
     return NextResponse.json({
-      results: allResults,
-      content: content.filter(c => c.content.length > 100),
+      results: uniqueResults.slice(0, 10),
+      content: topContents,
+      stats: {
+        totalFound: uniqueResults.length,
+        scraped: validContents.length,
+        returned: topContents.length,
+        avgRelevance: topContents.length > 0 
+          ? (topContents.reduce((sum, c) => sum + c.relevanceScore, 0) / topContents.length).toFixed(1)
+          : 0,
+      },
     });
 
   } catch (error: any) {
-    console.error('❌ Web search error:', error);
+    console.error('❌ Search error:', error);
     return NextResponse.json(
       { error: 'Search failed', details: error.message },
       { status: 500 }
